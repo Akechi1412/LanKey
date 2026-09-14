@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "lankey",
+  "version-string": "0.0.1",
+  "description": "Open-source Vietnamese input method that learns the user's typing habits",
+  "license": "GPL-3.0-or-later",
+  "dependencies": [
+    "gtest"
+  ]
+}

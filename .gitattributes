@@ -1,0 +1,9 @@
+# Chuẩn hoá LF trong repo; checkout cũng LF (clang-format, CI Linux và MSVC đều đọc được).
+* text=auto eol=lf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+*.png binary
+*.ico binary
+*.bin binary
+*.db binary

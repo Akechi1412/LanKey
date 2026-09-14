@@ -1,0 +1,37 @@
+cmake_minimum_required(VERSION 3.25)
+
+project(LanKey
+    VERSION 0.0.1
+    DESCRIPTION "Open-source Vietnamese input method that learns the user's typing habits"
+    LANGUAGES CXX)
+
+# -- Options ----------------------------------------------------------------------
+option(LANKEY_BUILD_TESTS "Build unit tests" ON)
+option(LANKEY_ENGINE_OPENKEY "Build OpenKey engine adapter (needs third_party/engine-openkey)" OFF)
+option(LANKEY_ENGINE_VKEY "Build VKey engine adapter (needs third_party/engine-vkey)" OFF)
+
+# -- C++ standard & common warnings for every LanKey target -----------------------
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)   # for clang-tidy / IDE
+
+# Interface target holding the compile flags; every LanKey target links to it.
+# third_party does NOT link it, so /WX is never applied to upstream code.
+add_library(lankey_options INTERFACE)
+if(MSVC)
+    target_compile_options(lankey_options INTERFACE
+        /W4 /WX /permissive- /utf-8 /Zc:__cplusplus /Zc:preprocessor /EHsc)
+else()
+    target_compile_options(lankey_options INTERFACE
+        -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion)
+endif()
+# Every include in the repo is rooted at the top level: #include "core/model/KeyEvent.h"
+target_include_directories(lankey_options INTERFACE ${CMAKE_SOURCE_DIR})
+
+add_subdirectory(core)
+
+if(LANKEY_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

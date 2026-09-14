@@ -1,0 +1,47 @@
+# LanKey - formatting conventions (PLAN 3.3.5). Base LLVM, 4 spaces, column 100.
+# Member suffix: trailing underscore (name_). Do not use m_.
+BasedOnStyle: LLVM
+Standard: c++20
+
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: Attach
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+DerivePointerAlignment: false
+PointerAlignment: Left
+QualifierAlignment: Left
+SpaceAfterTemplateKeyword: true
+FixNamespaceComments: true
+NamespaceIndentation: None
+IndentPPDirectives: None
+
+# Include order: matching header -> STL/system -> third_party -> core -> tests
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<gtest/'
+    Priority: 2
+  - Regex: '^<[a-z_]+>$'
+    Priority: 1
+  - Regex: '^<.*\.h>$'
+    Priority: 1
+  - Regex: '^"core/'
+    Priority: 3
+  - Regex: '^"platform/'
+    Priority: 4
+  - Regex: '^"ui/'
+    Priority: 4
+  - Regex: '^"app/'
+    Priority: 4
+  - Regex: '^"tests/'
+    Priority: 5
+  - Regex: '.*'
+    Priority: 6

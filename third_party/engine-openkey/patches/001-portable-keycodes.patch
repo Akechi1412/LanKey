@@ -1,0 +1,22 @@
+--- a/src/DataType.h
++++ b/src/DataType.h
+@@ -80,7 +80,7 @@
+     vector<Uint32> macroData; //used for macro function; it is keycode data
+ };
+ 
+-#ifdef LINUX
++#if defined(LINUX) || defined(OPENKEY_PORTABLE_KEYCODES)
+ #include "platforms/linux.h"
+ #elif _WIN32
+ #include "platforms/win32.h"
+--- a/src/Engine.cpp
++++ b/src/Engine.cpp
+@@ -21,7 +21,7 @@
+ static vector<Uint8> _breakCode = {
+     KEY_ESC, KEY_TAB, KEY_ENTER, KEY_RETURN, KEY_LEFT, KEY_RIGHT, KEY_DOWN, KEY_UP, KEY_COMMA, KEY_DOT,
+     KEY_SLASH, KEY_SEMICOLON, KEY_QUOTE, KEY_BACK_SLASH, KEY_MINUS, KEY_EQUALS, KEY_BACKQUOTE, KEY_TAB
+-#if _WIN32
++#if defined(_WIN32) && !defined(OPENKEY_PORTABLE_KEYCODES)
+ 	, VK_INSERT, VK_HOME, VK_END, VK_DELETE, VK_PRIOR, VK_NEXT, VK_SNAPSHOT, VK_PRINT, VK_SELECT, VK_HELP,
+ 	VK_EXECUTE, VK_NUMLOCK, VK_SCROLL
+ #endif

@@ -1,6 +1,6 @@
-// Conformance test suite for IVietnameseEngine - PLAN section 11.1.
+// Conformance test suite for IVietnameseEngine.
 //
-// Every adapter (OpenKey, VKey, ...) must run through this same table. It is the objective
+// Every adapter (OpenKey today, any future one) runs through this same table. It is the objective
 // basis for choosing the engine in Phase 0, and the safety net for future upstream updates.
 //
 // Adding an edge case = adding one row to kCases. Each case types a key sequence on a fake
@@ -51,6 +51,7 @@ const std::vector<EngineCase> kCases = {
     {"telex_viet",                 telex(), "vieejt",   U"việt",  true},
     {"telex_quet",                 telex(), "quets",    U"quét",  true},   // old OpenKey bug
     {"telex_dong",                 telex(), "ddoongf",  U"đồng",  true},
+    {"telex_dien",                 telex(), "dieejn",   U"diện",  true},
     {"telex_acute_then_continue",  telex(), "asn",      U"án",    true},   // "as" -> "á", keep typing without breaking
 
     // -- Modern / classic tone-mark placement ----------------------------------
@@ -58,19 +59,38 @@ const std::vector<EngineCase> kCases = {
     {"telex_hoa_classic",          telexClassic(), "hoaf", U"hòa", true},
 
     // -- Backspace restores diacritics -----------------------------------------
-    {"telex_bs_keeps_tone",        telex(), "tieengs\b", U"tiến", std::nullopt},
-    {"telex_bs_tuy",               telex(), "tuyfa\b",   U"tùy",  std::nullopt},
+    {"telex_bs_keeps_tone",        telex(),        "tieengs\b", U"tiến", std::nullopt},
+    {"telex_bs_tuy_modern",        telex(),        "tuyfa\b",   U"tuỳ",  std::nullopt},
+    {"telex_bs_tuy_classic",       telexClassic(), "tuyfa\b",   U"tùy",  std::nullopt},
 
     // -- Uppercase -------------------------------------------------------------
     {"telex_capitalized",          telex(), "Vieejt", U"Việt", true},
     {"telex_all_caps",             telex(), "VIEEJT", U"VIỆT", true},
 
-    // -- Interleaved English: no transform, flag = false -----------------------
-    {"telex_english_the",          telex(), "the",  U"the",  false},
-    {"telex_english_text",         telex(), "text", U"text", false},
+    // -- Interleaved English ---------------------------------------------------
+    // An engine cannot know "text" is English while it is being typed: 'x' is a tone
+    // key, so the composition legitimately reads "tẽt". Telling English from Vietnamese
+    // mid-syllable is the Smart Layer's job (see README). What the engine must do is
+    // restore the raw keys at the word break when the syllable is not valid Vietnamese.
+    {"telex_english_the",          telex(), "the",    U"the",    false},
+    {"telex_x_is_tone_key",        telex(), "text",   U"tẽt",    true},
+    {"telex_restore_text",         telex(), "text ",  U"text ",  std::nullopt},
+    {"telex_restore_user",         telex(), "user ",  U"user ",  std::nullopt},
+    {"telex_restore_hello",        telex(), "hello ", U"hello ", std::nullopt},
+    {"telex_valid_syllable_kept",  telex(), "tex ",   U"tẽ ",    std::nullopt},
 
     // -- Syllable boundary -----------------------------------------------------
     {"telex_two_syllables",        telex(), "chaof banj", U"chào bạn", true},
+
+    // -- Classic tone placement on "uy" / re-placement after Backspace ----------
+    {"telex_tuy_classic",          telexClassic(), "tuyf",     U"tùy",  true},
+    {"telex_thuy_classic",         telexClassic(), "thuys",    U"thúy", true},
+    {"telex_hoan_classic",         telexClassic(), "hoafn",    U"hoàn", true},
+    // After Backspace the tone must move back to where the (now shorter) syllable
+    // wants it, respecting the classic/modern setting. (VKey 8bb2bd0, evaluated as an
+    // alternative engine, re-placed it in modern style regardless of the setting.)
+    {"telex_bs_replaces_tone_classic", telexClassic(), "hoafn", U"hòa", std::nullopt},
+    {"telex_bs_replaces_tone_modern",  telex(),        "hoafn", U"hoà", std::nullopt},
 
     // -- VNI -------------------------------------------------------------------
     {"vni_tieng",                  vni(), "tie6ng1", U"tiếng", true},
@@ -117,7 +137,7 @@ void registerConformanceTests() {
                 struct Skip : testing::Test {
                     void TestBody() override {
                         GTEST_SKIP() << "No adapter registered in tests/unit/engine_registry.cpp. "
-                                        "Add OpenKeyEngineAdapter / VKeyEngineAdapter to run "
+                                        "Enable LANKEY_ENGINE_OPENKEY to run "
                                      << kCases.size() << " conformance cases.";
                     }
                 };

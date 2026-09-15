@@ -55,8 +55,8 @@ constexpr bool has(Modifier set, Modifier flag) noexcept {
 struct KeyEvent {
     VirtualKey key = VirtualKey::Unknown;
     // The character this key produces under the current layout/modifiers (Shift/CapsLock
-    // already applied), or 0 for control keys. Filled by the platform via ToUnicodeEx
-    // (see PLAN 4.1.1).
+    // already applied), or 0 for control keys. Filled by the platform via ToUnicodeEx on a
+    // COPY of the keyboard state (ToUnicode mutates the kernel's dead-key state).
     char32_t unicode = 0;
     Modifier modifiers = Modifier::None;
     bool isDown = true;

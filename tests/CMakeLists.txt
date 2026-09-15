@@ -15,9 +15,6 @@ target_link_libraries(lankey_tests
 if(LANKEY_ENGINE_OPENKEY)
     target_link_libraries(lankey_tests PRIVATE lankey_engine_openkey)
 endif()
-if(LANKEY_ENGINE_VKEY)
-    target_link_libraries(lankey_tests PRIVATE lankey_engine_vkey)
-endif()
 
 include(GoogleTest)
 # DISCOVERY_MODE PRE_TEST: tests are registered at runtime (RegisterTest), so discovery

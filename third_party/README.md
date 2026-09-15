@@ -15,9 +15,8 @@ Cập nhật upstream: thay `src/`, apply lại `patches/`, chạy `lankey_tests
 
 Không code nào ngoài `core/engine/*Adapter.cpp` được include header trong thư mục này.
 
-## Dự kiến
+## Hiện có
 
 | Thư mục | Nguồn | Trạng thái |
 |---|---|---|
-| `engine-openkey/` | github.com/tuyenvm/OpenKey (GPL) | chưa lấy |
-| `engine-vkey/` | github.com/phatMT97/VKey (xác minh license) | chưa lấy |
+| `engine-openkey/` | github.com/tuyenvm/OpenKey (GPL-3.0) | đã lấy `89c2fd3`, 1 patch, 28/28 conformance |

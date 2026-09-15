@@ -14,7 +14,7 @@ compile_commands.json
 *.VC.db
 *.VC.opendb
 .idea/
-.vscode/
+.vscode/*
 !.vscode/settings.json
 
 # OS

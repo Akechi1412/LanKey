@@ -20,6 +20,18 @@
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },
     {
+      "name": "win-clang",
+      "displayName": "Windows x64 (LLVM-MinGW clang, no admin / no MSVC required)",
+      "inherits": "base",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "VCPKG_HOST_TRIPLET": "x64-mingw-static"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
       "name": "win-ninja",
       "displayName": "Windows x64 (Ninja, run from Developer PowerShell)",
       "inherits": "base",
@@ -47,8 +59,10 @@
     }
   ],
   "buildPresets": [
-    { "name": "win-debug",   "configurePreset": "win",         "configuration": "Debug" },
-    { "name": "win-release", "configurePreset": "win",         "configuration": "Release" },
+    { "name": "win-debug",        "configurePreset": "win",         "configuration": "Debug" },
+    { "name": "win-release",      "configurePreset": "win",         "configuration": "Release" },
+    { "name": "win-clang-debug",  "configurePreset": "win-clang",   "configuration": "Debug" },
+    { "name": "win-clang-release","configurePreset": "win-clang",   "configuration": "Release" },
     { "name": "linux-debug", "configurePreset": "linux-clang", "configuration": "Debug" },
     { "name": "linux-asan",  "configurePreset": "linux-asan",  "configuration": "Debug" }
   ],
@@ -56,6 +70,12 @@
     {
       "name": "win-debug",
       "configurePreset": "win",
+      "configuration": "Debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "win-clang-debug",
+      "configurePreset": "win-clang",
       "configuration": "Debug",
       "output": { "outputOnFailure": true }
     },

@@ -6,15 +6,16 @@
 
 namespace lankey::core {
 
-// The single contract between LanKey and the upstream Telex/VNI engine (OpenKey, VKey...).
+// The single contract between LanKey and the upstream Telex/VNI engine (OpenKey).
 //
 // Everything else in LanKey includes only this header and NEVER an upstream header.
 // Swapping engines = writing a new adapter in core/engine/ and changing one line in
-// app/Composition.cpp. See PLAN 2.2 and ADR-002.
+// app/Composition.cpp. See README, "Thêm engine mới".
 //
 // Threading: process() and reset() are called on the hook thread -> no I/O, no locks,
 // no large allocations. configure() is called on that same thread when the user changes
-// settings. The adapter must hide any global mutable state of the upstream (PLAN 3.3.5).
+// settings. The adapter must hide any global mutable state of the upstream: the rest of
+// LanKey has no singletons and no global mutable state.
 class IVietnameseEngine {
 public:
     virtual ~IVietnameseEngine() = default;

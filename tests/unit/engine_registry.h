@@ -15,8 +15,8 @@ struct EngineCandidate {
     std::function<std::unique_ptr<core::IVietnameseEngine>()> make;
 };
 
-// The list of available adapters. Phase 0: add OpenKeyEngineAdapter and VKeyEngineAdapter
-// here (engine_registry.cpp), run the same test suite, compare results to pick the engine.
+// The list of available adapters. Every registered adapter runs the full conformance
+// suite; add a new one here (engine_registry.cpp) to compare it against OpenKey.
 std::vector<EngineCandidate> registeredEngines();
 
 }  // namespace lankey::tests

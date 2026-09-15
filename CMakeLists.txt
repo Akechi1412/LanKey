@@ -7,8 +7,7 @@ project(LanKey
 
 # -- Options ----------------------------------------------------------------------
 option(LANKEY_BUILD_TESTS "Build unit tests" ON)
-option(LANKEY_ENGINE_OPENKEY "Build OpenKey engine adapter (needs third_party/engine-openkey)" OFF)
-option(LANKEY_ENGINE_VKEY "Build VKey engine adapter (needs third_party/engine-vkey)" OFF)
+option(LANKEY_ENGINE_OPENKEY "Build OpenKey engine adapter (default engine, ADR-002)" ON)
 
 # -- C++ standard & common warnings for every LanKey target -----------------------
 set(CMAKE_CXX_STANDARD 20)
@@ -25,6 +24,11 @@ if(MSVC)
 else()
     target_compile_options(lankey_options INTERFACE
         -Wall -Wextra -Wpedantic -Werror -Wshadow -Wconversion -Wsign-conversion)
+endif()
+if(MINGW)
+    # llvm-mingw ships libc++/libunwind as DLLs that live only in its own bin/ directory.
+    # Link the runtime statically so lankey_tests.exe runs from any shell and from ctest.
+    target_link_options(lankey_options INTERFACE -static)
 endif()
 # Every include in the repo is rooted at the top level: #include "core/model/KeyEvent.h"
 target_include_directories(lankey_options INTERFACE ${CMAKE_SOURCE_DIR})

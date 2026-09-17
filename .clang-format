@@ -27,7 +27,7 @@ IndentPPDirectives: None
 # Include order: matching header -> STL/system -> third_party -> core -> tests
 IncludeBlocks: Regroup
 IncludeCategories:
-  - Regex: '^<gtest/'
+  - Regex: '^<(gtest|gmock|nlohmann|tl)/'
     Priority: 2
   - Regex: '^<[a-z_]+>$'
     Priority: 1

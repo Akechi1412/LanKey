@@ -1,0 +1,6 @@
+# Focus moves while "đi" is half typed: it is discarded, not committed, and the
+# phrase window starts over in the new app.
+{"text":"heej "}
+{"text":"ddi"}
+{"focus":{"app":"chrome.exe","password":false}}
+{"text":"hoafn "}

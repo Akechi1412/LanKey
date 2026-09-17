@@ -1,17 +1,77 @@
 # lankey_core - pure C++20, ZERO Win32. Must build on Linux (CI job linux-clang).
-# Phase 0: header-only (model + interfaces), hence an INTERFACE library.
-# Switch to STATIC as soon as the first .cpp lands (Phase 1a).
 
-add_library(lankey_core INTERFACE)
-target_link_libraries(lankey_core INTERFACE lankey_options)
-target_sources(lankey_core INTERFACE
+find_package(tl-expected CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+
+add_library(lankey_core STATIC
+    text/VietnameseText.cpp
+    text/Utf.cpp
+    model/Phrase.cpp
+    pipeline/WordBoundaryDetector.cpp
+    pipeline/InputPipeline.cpp
+    smart/privacy/PrivacyFilter.cpp
+    smart/learn/LearningRecorder.cpp
+    smart/suggest/Scorer.cpp
+    smart/suggest/PhraseTrie.cpp
+    smart/suggest/SuggestionEngine.cpp
+    smart/SmartWorker.cpp
+    storage/Migrations.cpp
+    storage/SqliteLexiconStore.cpp
+    storage/JsonSettingsStore.cpp
+)
+target_link_libraries(lankey_core
+    PUBLIC lankey_options tl::expected
+    PRIVATE unofficial::sqlite3::sqlite3 nlohmann_json::nlohmann_json)
+target_sources(lankey_core PUBLIC
     FILE_SET HEADERS
     BASE_DIRS ${CMAKE_SOURCE_DIR}
     FILES
-        model/KeyEvent.h
-        model/EngineSettings.h
+        model/AtomicSnapshot.h
         model/ComposedText.h
+        model/Correction.h
+        model/EngineSettings.h
+        model/Error.h
+        model/FocusContext.h
+        model/Geometry.h
+        model/KeyEvent.h
+        model/Lexicon.h
+        model/Phrase.h
+        model/Settings.h
+        model/Suggestion.h
+        model/SyllableCommitted.h
+        model/TextReplacement.h
+        model/Thresholds.h
+        interfaces/ICaretResolver.h
+        interfaces/IClock.h
+        interfaces/ICorrector.h
+        interfaces/IFocusObserver.h
+        interfaces/IKeySource.h
+        interfaces/IKeyStore.h
+        interfaces/ILexiconStore.h
+        interfaces/IPrivacyRule.h
+        interfaces/ISettingsChannel.h
+        interfaces/ISuggestionProvider.h
+        interfaces/ITextSink.h
         interfaces/IVietnameseEngine.h
+        pipeline/InputBuffer.h
+        pipeline/InputPipeline.h
+        pipeline/ToggleHotkey.h
+        pipeline/WordBoundaryDetector.h
+        smart/privacy/PrivacyFilter.h
+        smart/learn/LearningRecorder.h
+        smart/suggest/Scorer.h
+        smart/suggest/PhraseTrie.h
+        smart/suggest/SuggestionEngine.h
+        smart/SmartWorker.h
+        storage/JsonSettingsStore.h
+        storage/Migrations.h
+        storage/SqliteLexiconStore.h
+        text/VietnameseText.h
+        text/Utf.h
+        threading/SpscQueue.h
+        threading/TaskThread.h
+        util/SystemClock.h
 )
 
 # -- Engine adapters (Phase 0: enable each one to run the conformance tests) ---------

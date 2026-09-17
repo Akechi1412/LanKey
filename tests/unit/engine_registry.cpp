@@ -13,11 +13,11 @@ std::vector<EngineCandidate> registeredEngines() {
     std::vector<EngineCandidate> engines;
 #if defined(LANKEY_ENGINE_OPENKEY)
     engines.push_back({"openkey", [] {
-        return std::unique_ptr<core::IVietnameseEngine>(
-            std::make_unique<core::engine::OpenKeyEngineAdapter>());
-    }});
+                           return std::unique_ptr<core::IVietnameseEngine>(
+                               std::make_unique<core::engine::OpenKeyEngineAdapter>());
+                       }});
 #endif
     return engines;
 }
 
-}  // namespace lankey::tests
+} // namespace lankey::tests

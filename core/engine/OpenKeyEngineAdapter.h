@@ -31,6 +31,8 @@ public:
 
 private:
     [[nodiscard]] model::EngineResult passThrough() const;
+    [[nodiscard]] model::EngineResult trackPassThrough(const model::KeyEvent& key);
+    [[nodiscard]] model::EngineResult buildReplacement(const model::KeyEvent& key, int code);
     void applySettingsToGlobals() const;
 
     model::EngineSettings settings_;
@@ -39,4 +41,4 @@ private:
     bool transformApplied_ = false;
 };
 
-}  // namespace lankey::core::engine
+} // namespace lankey::core::engine

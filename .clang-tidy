@@ -1,20 +1,45 @@
-# LanKey - PLAN 3.3.6. Runs on LanKey code only, never on third_party/.
-# Every disabled rule must have its reason written next to it.
-Checks: >
+# LanKey - runs on LanKey code only, never on third_party/.
+# Every disabled rule must have its reason written here (comments inside the Checks value
+# itself would become part of the string - YAML folded scalars do not strip '#').
+#
+# Disabled:
+#   modernize-use-trailing-return-type                  too noisy, adds no clarity
+#   readability-identifier-length                       i, n, cp, c, s are valid names
+#   readability-magic-numbers                           duplicates cppcoreguidelines-avoid-magic-numbers
+#   cppcoreguidelines-avoid-magic-numbers               charmap / VK codes / Unicode code points are inherently numeric
+#   cppcoreguidelines-pro-bounds-constant-array-index   table lookups with checked indices
+#   cppcoreguidelines-pro-bounds-pointer-arithmetic     std::lower_bound over constexpr tables
+#   cppcoreguidelines-non-private-member-variables-in-classes / misc-...   value-type structs have public members
+#   readability-braces-around-statements                single-line guard clauses are the house style
+#   misc-include-cleaner                                re-enable once compile_commands is stable on CI
+#   cppcoreguidelines-avoid-c-arrays / modernize-avoid-c-arrays   generated constexpr tables
+#   modernize-use-designated-initializers               generated tables and small aggregates; noise
+#   readability-uppercase-literal-suffix                1u / 100u is the house style
+#   cppcoreguidelines-pro-bounds-avoid-unchecked-container-access   operator[] on strings after explicit size checks is normal here
+#   bugprone-easily-swappable-parameters                fires on (bool, char32_t, uint64) triples; strong types are not worth it here
+Checks: >-
   bugprone-*,
   performance-*,
   modernize-*,
   readability-*,
   cppcoreguidelines-*,
   misc-*,
-  -modernize-use-trailing-return-type,        # too noisy, adds no clarity
-  -readability-identifier-length,             # i, n, cp are valid names
-  -readability-magic-numbers,                 # duplicates cppcoreguidelines-avoid-magic-numbers
-  -cppcoreguidelines-avoid-magic-numbers,     # charmap/VK codes are inherently numeric
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-designated-initializers,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-braces-around-statements,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-avoid-c-arrays,
   -cppcoreguidelines-pro-bounds-constant-array-index,
-  -cppcoreguidelines-non-private-member-variables-in-classes,  # value-type structs have public members
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
   -misc-non-private-member-variables-in-classes,
-  -misc-include-cleaner                        # re-enable once compile_commands is stable
+  -misc-include-cleaner,
+  -bugprone-easily-swappable-parameters,
+  -readability-uppercase-literal-suffix,
+  -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
 
 WarningsAsErrors: ''
 HeaderFilterRegex: '^(core|platform|ui|app|tests)/.*'

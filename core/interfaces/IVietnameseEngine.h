@@ -32,4 +32,4 @@ public:
     [[nodiscard]] virtual const model::EngineSettings& settings() const = 0;
 };
 
-}  // namespace lankey::core
+} // namespace lankey::core

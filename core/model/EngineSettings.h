@@ -23,4 +23,4 @@ struct EngineSettings {
     friend constexpr bool operator==(const EngineSettings&, const EngineSettings&) = default;
 };
 
-}  // namespace lankey::core::model
+} // namespace lankey::core::model

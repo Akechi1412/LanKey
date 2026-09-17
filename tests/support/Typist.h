@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "core/interfaces/IVietnameseEngine.h"
+#include "core/text/Utf.h"
 
 namespace lankey::tests {
 
@@ -103,25 +104,7 @@ private:
 
 // Lets gtest print u32 strings when an assertion fails.
 inline std::string toUtf8(std::u32string_view s) {
-    std::string out;
-    for (const char32_t cp : s) {
-        if (cp < 0x80) {
-            out += static_cast<char>(cp);
-        } else if (cp < 0x800) {
-            out += static_cast<char>(0xC0 | (cp >> 6));
-            out += static_cast<char>(0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            out += static_cast<char>(0xE0 | (cp >> 12));
-            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (cp & 0x3F));
-        } else {
-            out += static_cast<char>(0xF0 | (cp >> 18));
-            out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
-            out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
-            out += static_cast<char>(0x80 | (cp & 0x3F));
-        }
-    }
-    return out;
+    return core::text::toUtf8(s);
 }
 
-}  // namespace lankey::tests
+} // namespace lankey::tests

@@ -27,8 +27,9 @@ Thumbs.db
 # Session memory plugin
 /.remember/
 
-# LanKey runtime data - never commit user data
+# LanKey runtime data - never commit user data (replay test fixtures are synthetic)
 *.db
 *.db-wal
 *.db-shm
 *.keylog
+!/tests/replay/fixtures/**/*.keylog

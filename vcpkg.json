@@ -5,6 +5,9 @@
   "description": "Open-source Vietnamese input method that learns the user's typing habits",
   "license": "GPL-3.0-or-later",
   "dependencies": [
-    "gtest"
+    "gtest",
+    "tl-expected",
+    "nlohmann-json",
+    "sqlite3"
   ]
 }

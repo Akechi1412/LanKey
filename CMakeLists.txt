@@ -30,10 +30,21 @@ if(MINGW)
     # Link the runtime statically so lankey_tests.exe runs from any shell and from ctest.
     target_link_options(lankey_options INTERFACE -static)
 endif()
+if(WIN32)
+    # Windows 10 API surface (GetDpiForWindow, SetProcessDpiAwarenessContext...).
+    target_compile_definitions(lankey_options INTERFACE _WIN32_WINNT=0x0A00 WINVER=0x0A00 NTDDI_VERSION=0x0A000006)
+endif()
 # Every include in the repo is rooted at the top level: #include "core/model/KeyEvent.h"
 target_include_directories(lankey_options INTERFACE ${CMAKE_SOURCE_DIR})
 
 add_subdirectory(core)
+if(WIN32)
+    add_subdirectory(platform/win32)
+    add_subdirectory(ui/win32)
+    if(LANKEY_ENGINE_OPENKEY)
+        add_subdirectory(app)
+    endif()
+endif()
 
 if(LANKEY_BUILD_TESTS)
     enable_testing()

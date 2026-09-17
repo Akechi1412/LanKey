@@ -1,0 +1,4 @@
+# Alt+Tab is a context break: "chào" must not be joined to "xin".
+{"text":"xin "}
+{"k":"Tab","mods":["Alt"]}
+{"text":"chaof "}

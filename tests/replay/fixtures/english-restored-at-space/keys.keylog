@@ -1,0 +1,3 @@
+# "text" reads as "tẽt" while typing; the engine restores the raw keys at the space.
+# The committed syllable is the restored one, with transform = 0.
+{"text":"text "}

@@ -7,13 +7,14 @@
 // "screen" (tests/support/Typist.h) and compares the final result - independent of each
 // engine's own backspace/retype strategy.
 
-#include <gtest/gtest.h>
-
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include <gtest/gtest.h>
+
+#include "tests/support/DynamicTests.h"
 #include "tests/support/Typist.h"
 #include "tests/unit/engine_registry.h"
 
@@ -26,13 +27,15 @@ using core::model::InputMethod;
 struct EngineCase {
     std::string name;
     EngineSettings settings;
-    std::string keys;             // see special-character conventions in Typist.h
-    std::u32string expected;      // screen contents after typing finishes
+    std::string keys;        // see special-character conventions in Typist.h
+    std::u32string expected; // screen contents after typing finishes
     // If set: check ComposedText::vietnameseTransformApplied of the last key.
     std::optional<bool> expectTransform;
 };
 
-EngineSettings telex() { return {}; }
+EngineSettings telex() {
+    return {};
+}
 EngineSettings telexClassic() {
     EngineSettings s;
     s.modernToneMark = false;
@@ -127,13 +130,14 @@ private:
     EngineCase case_;
 };
 
+} // namespace
+
 void registerConformanceTests() {
     const auto engines = registeredEngines();
 
     if (engines.empty()) {
         testing::RegisterTest(
-            "EngineConformance", "NoAdapterRegistered", nullptr, nullptr, __FILE__, __LINE__,
-            [] {
+            "EngineConformance", "NoAdapterRegistered", nullptr, nullptr, __FILE__, __LINE__, [] {
                 struct Skip : testing::Test {
                     void TestBody() override {
                         GTEST_SKIP() << "No adapter registered in tests/unit/engine_registry.cpp. "
@@ -150,17 +154,9 @@ void registerConformanceTests() {
         const std::string suite = "EngineConformance_" + engine.name;
         for (const auto& c : kCases) {
             testing::RegisterTest(suite.c_str(), c.name.c_str(), nullptr, nullptr, __FILE__,
-                                  __LINE__,
-                                  [engine, c] { return new ConformanceTest(engine, c); });
+                                  __LINE__, [engine, c] { return new ConformanceTest(engine, c); });
         }
     }
 }
 
-}  // namespace
-}  // namespace lankey::tests
-
-int main(int argc, char** argv) {
-    testing::InitGoogleTest(&argc, argv);
-    lankey::tests::registerConformanceTests();
-    return RUN_ALL_TESTS();
-}
+} // namespace lankey::tests

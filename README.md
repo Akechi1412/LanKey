@@ -4,20 +4,22 @@ Bộ gõ tiếng Việt mã nguồn mở cho Windows, hoạt động trên toàn
 người dùng** để gợi ý từ/cụm từ và tự sửa lỗi chính tả cá nhân hoá. Dữ liệu học nằm 100% trên
 máy người dùng, không có đồng bộ cloud.
 
-> **Trạng thái:** đang phát triển, chưa gõ được. Đã có engine Telex/VNI (OpenKey) bọc sau
-> interface riêng và bộ conformance test; chưa có hook bàn phím, chưa có Smart Layer.
+> **Trạng thái:** v0.1-alpha đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
+> SQLite, gợi ý/dự đoán có popup, tray icon, Ctrl+Shift bật/tắt. Chưa có: tự sửa lỗi cá nhân
+> hoá (F2), cửa sổ Settings, mã hoá DB.
 
 ## Ý tưởng
 
 Các bộ gõ hiện có (Unikey, EVKey, OpenKey) chỉ làm một việc: chuyển Telex/VNI thành chữ có dấu.
 LanKey giữ nguyên phần đó (lấy engine từ upstream, không viết lại) và thêm hai thứ:
 
-- **Gợi ý theo lịch sử cá nhân** — ghi nhớ các cụm 1–3 âm tiết hay gõ ("chương trình", "hệ điều
-  hành"), hiện popup khi gõ vài ký tự đầu, chọn bằng Tab.
+- **Gợi ý theo lịch sử cá nhân** — ghi nhớ các cụm 1–5 âm tiết hay gõ ("chương trình", "hệ điều
+  hành windows"); sau khi gõ space thì **dự đoán từ tiếp theo**, đang gõ dở thì hoàn thành cụm.
+  Popup chỉ hiện khi bạn **ngừng gõ ~350 ms** (không nháy); Tab/Enter chọn, ↑↓ đổi, Esc tắt.
 - **Tự sửa lỗi cá nhân hoá** — phát hiện âm tiết/cụm gõ sai so với từ điển chuẩn hoặc so với chính
   thói quen tự sửa của người dùng ("sữa lỗi" → "sửa lỗi"), có Undo bằng Backspace.
 
-Đơn vị học là **cụm 1–3 âm tiết**, không phải âm tiết đơn — nếu không thì "chương trình" không
+Đơn vị học là **cụm 1–5 âm tiết**, không phải âm tiết đơn — nếu không thì "chương trình" không
 bao giờ được học và "sữa lỗi" không bao giờ được sửa.
 
 ## Kiến trúc
@@ -29,14 +31,14 @@ Phím thô → [platform/win32: hook] → [core: engine adapter → smart layer]
 
 | Thư mục | Vai trò | Trạng thái |
 |---|---|---|
-| `core/` | model, interface, engine adapter, smart layer, storage. **Không include Win32.** | model + `IVietnameseEngine` + OpenKey adapter |
+| `core/` | model, interface, engine adapter, pipeline, smart layer (privacy/learn/suggest), storage (SQLite, JSON), threading. **Không include Win32.** | có; `smart/correct/` (F2) chưa |
 | `third_party/` | engine upstream vendored, mỗi thư mục có `UPSTREAM.md` + `LICENSE` + `patches/` | `engine-openkey/` |
-| `tests/` | unit test + conformance test cho engine; sau này thêm replay harness | conformance 28 case, Typist |
+| `tests/` | `unit/` (một file test cho mỗi class), `fakes/` (một fake cho mỗi interface), `replay/` (harness + `fixtures/`), `support/` | 86 test |
 | `tools/` | script sinh dữ liệu (`build-dictionary`) | có |
 | `data/` | từ điển âm tiết chuẩn (read-only, sinh từ `tools/`) | 6.683 âm tiết |
-| `platform/win32/` | hook, SendInput, UIA, DPAPI — implement interface của `core/` | chưa có |
-| `ui/` | popup gợi ý, tray, settings | chưa có |
-| `app/` | `main()`, nối mọi thứ lại (DI thủ công) | chưa có |
+| `platform/win32/` | `KeyboardHook` (thread riêng + watchdog), `InputSender`, `FocusWatcher` (UIA IsPassword), `CaretResolver` (UIA caret) | có |
+| `ui/win32/` | `TrayIcon`, `SuggestionPopup` (GDI) | có |
+| `app/` | `App` (DI thủ công, 4 thread, marshalling), `Log`, `main` | có |
 
 Quy tắc phụ thuộc: `app → ui, platform, core`; `ui → core`; `platform → core`; `core → chỉ STL +
 third_party thuần C++`. Cấm `core → platform/ui/<windows.h>` và `ui → platform`.
@@ -86,6 +88,34 @@ Lần configure đầu vcpkg sẽ build `gtest` (~1 phút). Engine OpenKey đư�
 Từ điển âm tiết chuẩn: `python tools/build-dictionary/build_syllables.py` sinh
 `data/vi_base_syllables.txt` (nguồn và license trong `tools/build-dictionary/SOURCES.md`).
 
+## Test
+
+```
+tests/unit/       một file cho mỗi class public trong core/; engine_conformance.cpp chạy 28 case
+                  cho MỌI adapter đăng ký trong engine_registry.cpp
+tests/fakes/      FakeKeySource, FakeTextSink, FakeFocusObserver, FakeClock, FakeEngine,
+                  InMemoryLexiconStore, ... - một fake cho mỗi interface trong core/interfaces/
+tests/replay/     ReplayHarness: chạy một chuỗi phím ghi sẵn qua toàn bộ InputPipeline với engine
+                  THẬT và platform giả; mỗi thư mục con của fixtures/ là một test
+```
+
+Mỗi bug thực tế gặp khi dùng thử → **ghi thành một fixture trước khi sửa**. Một fixture gồm:
+
+```
+tests/replay/fixtures/<tên>/
+  keys.keylog    JSON lines, mỗi dòng một sự kiện, dòng bắt đầu bằng # là chú thích:
+                   {"text":"chaof banj."}              chuỗi phím (chữ hoa = Shift)
+                   {"k":"Backspace"}                   phím có tên: Backspace Enter Tab Escape Space
+                                                       Left Right Up Down Home End Delete
+                   {"k":"Tab","mods":["Alt"]}          kèm Ctrl / Alt / Win / Shift / CapsLock
+                   {"focus":{"app":"chrome.exe","password":false}}
+                   {"click":true}
+                   {"wait":1500}                       tua đồng hồ giả (ms)
+  expected.txt   nội dung màn hình cuối cùng
+  commits.txt    (tuỳ chọn) mỗi dòng một âm tiết đã commit: <cửa sổ cụm>|<terminator>|<transform 0/1>
+                 terminator: SP, NL, TAB, NONE hoặc chính ký tự đó. Ví dụ: chào bạn|.|1
+```
+
 ## Quy ước code
 
 - C++20, `-Wall -Wextra -Werror` (MSVC: `/W4 /WX`). Code upstream trong `third_party/` build với
@@ -97,7 +127,11 @@ Từ điển âm tiết chuẩn: `python tools/build-dictionary/build_syllables.
 - Mỗi class ghi rõ đầu file chạy trên thread nào. Không singleton, không global mutable state
   (trừ những gì adapter phải che đi của upstream).
 - Mỗi class public trong `core/` có file test cùng tên. Không test qua Win32.
-- `.clang-format` và `.clang-tidy` ở root; chạy `clang-format --dry-run --Werror` trước khi commit.
+- `.clang-format` và `.clang-tidy` ở root. CI chạy `clang-format --dry-run --Werror` trên `core/` và
+  `tests/`; chạy local: `git ls-files 'core/*' 'tests/*' | grep -E '\.(h|cpp)$' | xargs clang-format -i`.
+  `clang-tidy -p build/<preset> <file>` dùng `compile_commands.json` của preset.
+- Thread: hook thread không I/O, không lock, không ném exception (`InputPipeline::onKey` là
+  `noexcept`). Mọi `TextReplacement` sinh ngoài hook thread mang `expectedGeneration`.
 
 ## Thêm engine mới
 

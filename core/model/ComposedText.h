@@ -37,4 +37,4 @@ struct EngineResult {
     ComposedText composed;
 };
 
-}  // namespace lankey::core::model
+} // namespace lankey::core::model

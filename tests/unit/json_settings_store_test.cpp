@@ -1,0 +1,76 @@
+#include <filesystem>
+#include <fstream>
+
+#include <gtest/gtest.h>
+
+#include "core/storage/JsonSettingsStore.h"
+
+namespace lankey::core::storage {
+namespace {
+
+using model::AutoCorrectLevel;
+using model::InputMethod;
+using model::Settings;
+
+TEST(JsonSettingsStore, RoundTripsEveryField) {
+    Settings s;
+    s.vietnameseEnabled = false;
+    s.engine.inputMethod = InputMethod::Vni;
+    s.engine.modernToneMark = false;
+    s.engine.spellCheck = false;
+    s.engine.quickTelex = true;
+    s.suggestions.enabled = false;
+    s.suggestions.minPrefixLength = 3;
+    s.suggestions.weightRecency = 0.25;
+    s.autoCorrect.level = AutoCorrectLevel::Aggressive;
+    s.privacy.excludedApps = {"a.exe", "b.exe"};
+    s.privacy.suggestionsDisabledApps = {"c.exe"};
+
+    const auto back = JsonSettingsStore::parse(JsonSettingsStore::serialize(s));
+    ASSERT_TRUE(back.has_value()) << back.error().message;
+    EXPECT_EQ(*back, s);
+}
+
+TEST(JsonSettingsStore, MissingAndUnknownKeysKeepDefaults) {
+    const auto s = JsonSettingsStore::parse(R"({"engine":{"inputMethod":"vni"},"future":42})");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(s->engine.inputMethod, InputMethod::Vni);
+    EXPECT_TRUE(s->engine.modernToneMark); // default kept
+    EXPECT_EQ(s->suggestions.minPrefixLength, Settings{}.suggestions.minPrefixLength);
+}
+
+TEST(JsonSettingsStore, WrongTypesAndBadEnumsFallBackToDefaults) {
+    const auto s = JsonSettingsStore::parse(
+        R"({"vietnameseEnabled":"yes","engine":{"inputMethod":"morse"},"suggestions":{"minPrefixLength":99}})");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_TRUE(s->vietnameseEnabled);
+    EXPECT_EQ(s->engine.inputMethod, InputMethod::Telex);
+    EXPECT_EQ(s->suggestions.minPrefixLength, 4); // clamped
+}
+
+TEST(JsonSettingsStore, CorruptFileIsAnError) {
+    EXPECT_FALSE(JsonSettingsStore::parse("{not json").has_value());
+    EXPECT_FALSE(JsonSettingsStore::parse("[1,2]").has_value());
+}
+
+TEST(JsonSettingsStore, LoadMissingFileGivesDefaultsAndSaveCreatesIt) {
+    const auto dir = std::filesystem::temp_directory_path() / "lankey-settings-test";
+    std::filesystem::remove_all(dir);
+    const JsonSettingsStore store((dir / "settings.json").string());
+
+    const auto fresh = store.load();
+    ASSERT_TRUE(fresh.has_value());
+    EXPECT_EQ(*fresh, Settings{});
+
+    Settings s;
+    s.engine.quickTelex = true;
+    ASSERT_TRUE(store.save(s).has_value());
+    const auto loaded = store.load();
+    ASSERT_TRUE(loaded.has_value());
+    EXPECT_TRUE(loaded->engine.quickTelex);
+    EXPECT_FALSE(std::filesystem::exists(dir / "settings.json.tmp"));
+    std::filesystem::remove_all(dir);
+}
+
+} // namespace
+} // namespace lankey::core::storage

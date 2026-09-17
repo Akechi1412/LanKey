@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include "core/interfaces/IVietnameseEngine.h"
+
 #include "tests/support/Typist.h"
 
 namespace lankey::tests {
@@ -95,5 +96,5 @@ TEST(Utf8, EncodesVietnamese) {
     EXPECT_EQ(toUtf8(U"tiếng"), "tiếng");
 }
 
-}  // namespace
-}  // namespace lankey::tests
+} // namespace
+} // namespace lankey::tests

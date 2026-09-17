@@ -14,6 +14,9 @@ enum class VirtualKey : std::uint16_t {
     Backspace = 0x08,
     Tab = 0x09,
     Enter = 0x0D,
+    Shift = 0x10, // generic modifier keys, reported so hotkey chords can be detected
+    Control = 0x11,
+    Alt = 0x12,
     Escape = 0x1B,
     Space = 0x20,
 
@@ -25,9 +28,43 @@ enum class VirtualKey : std::uint16_t {
     ArrowDown = 0x28,
     Delete = 0x2E,
 
-    Digit0 = 0x30, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+    Digit0 = 0x30,
+    Digit1,
+    Digit2,
+    Digit3,
+    Digit4,
+    Digit5,
+    Digit6,
+    Digit7,
+    Digit8,
+    Digit9,
 
-    A = 0x41, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    A = 0x41,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
 
     // Punctuation/symbol keys: the pipeline only needs to know "printable, not a letter".
     // The specific character is read from KeyEvent::unicode.
@@ -77,4 +114,4 @@ struct KeyEvent {
     }
 };
 
-}  // namespace lankey::core::model
+} // namespace lankey::core::model

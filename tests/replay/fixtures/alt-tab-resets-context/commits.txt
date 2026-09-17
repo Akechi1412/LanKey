@@ -1,0 +1,2 @@
+xin|SP|0
+chào|SP|1

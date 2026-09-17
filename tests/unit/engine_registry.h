@@ -11,7 +11,7 @@ namespace lankey::tests {
 
 // One engine adapter participating in the conformance test suite.
 struct EngineCandidate {
-    std::string name;  // used as the test suite name: EngineConformance_<name>
+    std::string name; // used as the test suite name: EngineConformance_<name>
     std::function<std::unique_ptr<core::IVietnameseEngine>()> make;
 };
 
@@ -19,4 +19,4 @@ struct EngineCandidate {
 // suite; add a new one here (engine_registry.cpp) to compare it against OpenKey.
 std::vector<EngineCandidate> registeredEngines();
 
-}  // namespace lankey::tests
+} // namespace lankey::tests

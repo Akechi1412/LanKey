@@ -6,6 +6,8 @@ add_library(lankey_ui STATIC
     Theme.cpp
     TrayIcon.cpp
     SuggestionPopup.cpp
+    DataDialog.cpp
+    LanguageToast.cpp
 )
 target_link_libraries(lankey_ui
     PUBLIC lankey_core

@@ -26,6 +26,7 @@ enum MenuId : UINT {
     kMenuSuggestions,
     kMenuAutoCorrect,
     kMenuEraseData,
+    kMenuShowData,
     kMenuQuit,
 };
 
@@ -240,6 +241,9 @@ LRESULT TrayIcon::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
         case kMenuAutoCorrect:
             if (callbacks_.onAutoCorrectEnabled) callbacks_.onAutoCorrectEnabled(!autoCorrect_);
             break;
+        case kMenuShowData:
+            if (callbacks_.onShowData) callbacks_.onShowData();
+            break;
         case kMenuEraseData:
             if (callbacks_.onEraseAllData) callbacks_.onEraseAllData();
             break;
@@ -282,6 +286,7 @@ void TrayIcon::showMenu() {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(suggestions_), kMenuSuggestions, L"Gợi ý cụm từ");
     AppendMenuW(menu, check(autoCorrect_), kMenuAutoCorrect, L"Tự sửa lỗi chính tả");
+    AppendMenuW(menu, MF_STRING, kMenuShowData, L"Dữ liệu của bạn...");
     AppendMenuW(menu, MF_STRING, kMenuEraseData, L"Xoá toàn bộ dữ liệu đã học...");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuQuit, L"Thoát");

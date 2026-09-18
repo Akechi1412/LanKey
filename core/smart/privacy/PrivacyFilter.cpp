@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <map>
 
 #include "core/text/VietnameseText.h"
 
@@ -73,6 +75,67 @@ PrivacyVerdict LettersOnlyRule::evaluate(const model::SyllableCommitted& c) cons
     return PrivacyVerdict::Accept;
 }
 
+// -- ContentHeuristicRule ----------------------------------------------------------------------
+
+bool ContentHeuristicRule::looksSensitive(std::u32string_view token) {
+    if (token.empty()) return false;
+    int digits = 0;
+    int longestDigitRun = 0;
+    int run = 0;
+    bool symbol = false;
+    bool at = false;
+    bool dot = false;
+    for (const char32_t c : token) {
+        const bool digit = c >= U'0' && c <= U'9';
+        digits += digit ? 1 : 0;
+        run = digit ? run + 1 : 0;
+        longestDigitRun = std::max(longestDigitRun, run);
+        if (c == U'@') at = true;
+        if (c == U'.') dot = true;
+        if (!digit && !text::isLetter(c) && c != U' ') symbol = true;
+    }
+    if (at && dot) return true;                                      // e-mail
+    if (token.size() >= 20) return true;                             // key, hash, URL
+    if (longestDigitRun >= 13 && longestDigitRun <= 19) return true; // card number
+    if (longestDigitRun == 9 || longestDigitRun == 12) return true;  // CMND / CCCD
+    if (digits >= 3 && symbol) return true;                          // "P@ss-w0rd1"
+    if (token.size() >= 8) {
+        // Shannon entropy in bits per character over the token's own alphabet.
+        std::map<char32_t, int> counts;
+        for (const char32_t c : token)
+            ++counts[c];
+        double entropy = 0.0;
+        const auto n = static_cast<double>(token.size());
+        for (const auto& [c, k] : counts) {
+            const double p = static_cast<double>(k) / n;
+            entropy -= p * std::log2(p);
+        }
+        if (entropy > 3.5) return true;
+    }
+    return false;
+}
+
+PrivacyVerdict ContentHeuristicRule::evaluate(const model::SyllableCommitted& c) const {
+    // Rebuild the on-screen tokens: syllables joined by non-space separators are one.
+    const auto& window = c.window.committed;
+    std::u32string token;
+    for (std::size_t i = 0; i < window.size(); ++i) {
+        token += window[i].typed.empty() ? window[i].text : window[i].typed;
+        const bool last = i + 1 == window.size();
+        const std::u32string_view sep =
+            !last && i < c.separators.size() ? std::u32string_view(c.separators[i]) : U" ";
+        const bool glued = !last && !sep.empty() &&
+                           std::ranges::none_of(sep, [](char32_t ch) { return ch == U' '; });
+        if (glued) {
+            token += sep;
+            continue;
+        }
+        if (looksSensitive(token)) return PrivacyVerdict::Reject;
+        token.clear();
+    }
+    return PrivacyVerdict::Accept;
+}
+
 // -- PrivacyFilter ------------------------------------------------------------------------
 
 PrivacyFilter::PrivacyFilter(std::vector<std::unique_ptr<IPrivacyRule>> rules)
@@ -85,6 +148,7 @@ PrivacyFilter PrivacyFilter::standard(const model::PrivacySettings& settings) {
     std::vector<std::unique_ptr<IPrivacyRule>> rules;
     rules.push_back(std::make_unique<AppExclusionRule>(std::move(apps)));
     rules.push_back(std::make_unique<PasswordFieldRule>());
+    rules.push_back(std::make_unique<ContentHeuristicRule>());
     rules.push_back(std::make_unique<LettersOnlyRule>());
     return PrivacyFilter(std::move(rules));
 }

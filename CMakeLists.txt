@@ -28,7 +28,8 @@ endif()
 if(MINGW)
     # llvm-mingw ships libc++/libunwind as DLLs that live only in its own bin/ directory.
     # Link the runtime statically so lankey_tests.exe runs from any shell and from ctest.
-    target_link_options(lankey_options INTERFACE -static)
+    # Release binaries are stripped: smaller, and nothing for a scanner to misread.
+    target_link_options(lankey_options INTERFACE -static $<$<CONFIG:Release>:-s>)
 endif()
 if(WIN32)
     # Windows 10 API surface (GetDpiForWindow, SetProcessDpiAwarenessContext...).

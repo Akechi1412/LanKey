@@ -5,8 +5,9 @@ người dùng** để gợi ý từ/cụm từ và tự sửa lỗi chính tả
 máy người dùng, không có đồng bộ cloud.
 
 > **Trạng thái:** v0.1 (MVP) đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
-> SQLite, gợi ý/dự đoán có popup, tự sửa lỗi cá nhân hoá (F2, mặc định mức Thận trọng, Undo bằng
-> Backspace/Ctrl+Z), tray icon, Ctrl+Shift bật/tắt. Chưa có: cửa sổ Settings, mã hoá DB.
+> SQLite niêm phong bằng DPAPI, gợi ý/dự đoán có popup, tự sửa lỗi cá nhân hoá (F2, mặc định mức
+> Thận trọng, Undo bằng Backspace/Ctrl+Z), tray icon với "Dữ liệu của bạn", Ctrl+Shift bật/tắt.
+> Chưa có: cửa sổ Settings, ký số bản phát hành.
 
 ## Ý tưởng
 
@@ -65,7 +66,10 @@ Các quyết định đã chốt:
 - **Thread:** hook (< 1 ms, `noexcept`, không I/O/lock) · worker · DB · UI. Mọi lệnh thay thế văn
   bản sinh ra ngoài hook thread mang `expectedGeneration`; lệch với generation hiện tại → bỏ. Đây là
   cách duy nhất ngăn autocorrect bất đồng bộ "ăn chữ" khi gõ nhanh.
-- **Lưu trữ:** SQLite tại `%APPDATA%\LanKey\` sau `ILexiconStore`; SQLCipher + DPAPI thêm sau.
+- **Lưu trữ:** SQLite trong RAM, ảnh DB niêm phong bằng DPAPI tại `%APPDATA%\LanKey\user_lexicon.enc`
+  (ADR-012, thay SQLCipher: port vcpkg chỉ MSVC/nmake); không journal trên đĩa. Chính sách dữ liệu:
+  [DATA-POLICY.md](DATA-POLICY.md), nhúng vào exe và được `data_policy_test.cpp` đối chiếu với code;
+  báo cáo lỗ hổng: [SECURITY.md](SECURITY.md).
 - **Engine không nhận diện được tiếng Anh xen kẽ** khi đang gõ (`text` → `tẽt` vì `x` là phím ngã;
   chỉ khôi phục `text` tại space). Việc đó thuộc Smart Layer, qua cờ
   `ComposedText::vietnameseTransformApplied` + từ điển.

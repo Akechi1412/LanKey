@@ -15,10 +15,13 @@
 #include "core/util/SystemClock.h"
 
 #include "platform/win32/CaretResolver.h"
+#include "platform/win32/DpapiProtector.h"
 #include "platform/win32/FocusWatcher.h"
 #include "platform/win32/InputSender.h"
 #include "platform/win32/KeyboardHook.h"
 #include "platform/win32/Win32.h"
+#include "ui/win32/DataDialog.h"
+#include "ui/win32/LanguageToast.h"
 #include "ui/win32/SuggestionPopup.h"
 #include "ui/win32/TrayIcon.h"
 
@@ -57,6 +60,8 @@ private:
     void setInputMethod(core::model::InputMethod method);
     void setSuggestionsEnabled(bool enabled);
     void setAutoCorrectEnabled(bool enabled);
+    void showDataDialog();
+    void openDataFolder();
     void confirmEraseAllData();
     void saveSettings();
     void refreshTray();
@@ -74,6 +79,7 @@ private:
     platform::win32::CaretResolver caret_;
     core::smart::SuggestionEngine suggestions_;
     core::smart::AutoCorrectEngine corrector_;
+    platform::win32::DpapiProtector protector_;
     std::unique_ptr<core::storage::SqliteLexiconStore> store_;
     std::unique_ptr<core::smart::SmartWorker> worker_;
     std::unique_ptr<core::pipeline::InputPipeline> pipeline_;
@@ -82,6 +88,8 @@ private:
 
     ui::win32::TrayIcon tray_;
     ui::win32::SuggestionPopup popup_;
+    ui::win32::DataDialog dataDialog_;
+    ui::win32::LanguageToast toast_;
     HWND uiWindow_ = nullptr;
     HANDLE singleInstance_ = nullptr;
     std::uint64_t pendingGeneration_ = 0; // list waiting for the idle timer

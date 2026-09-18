@@ -3,8 +3,10 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <sqlite3.h>
+#include <sstream>
 #include <string>
 
 #include <gtest/gtest.h>
@@ -13,6 +15,7 @@
 #include "core/storage/Migrations.h"
 #include "core/storage/SqliteLexiconStore.h"
 
+#include "tests/fakes/FakeDataProtector.h"
 #include "tests/fakes/InMemoryLexiconStore.h"
 
 namespace lankey::core {
@@ -58,13 +61,70 @@ struct Factory<SqliteLexiconStore> {
     }
 };
 
+// The protected variant: in-memory database persisted as a sealed image in a temp file.
+struct ProtectedSqliteStore {};
+
+template <>
+struct Factory<ProtectedSqliteStore> {
+    // The store keeps a raw pointer to the protector and the path must outlive it: park
+    // both in a wrapper that is destroyed with the store.
+    struct Owner final : ILexiconStore {
+        tests::FakeDataProtector protector;
+        std::filesystem::path path;
+        std::unique_ptr<SqliteLexiconStore> store;
+        ~Owner() override {
+            store.reset();
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+        lk::expected<std::vector<LexiconEntry>> loadAll() override { return store->loadAll(); }
+        lk::expected<void> applyDeltas(const model::LexiconDeltaBatch& b) override {
+            return store->applyDeltas(b);
+        }
+        lk::expected<void> eraseAll() override { return store->eraseAll(); }
+        lk::expected<int> cleanup(std::int64_t now) override { return store->cleanup(now); }
+        lk::expected<std::vector<model::CorrectionRule>> loadCorrections() override {
+            return store->loadCorrections();
+        }
+        lk::expected<std::vector<std::u32string>> loadBlacklist() override {
+            return store->loadBlacklist();
+        }
+        lk::expected<void> reinforceCorrection(std::u32string_view w, std::u32string_view c,
+                                               double d, model::CorrectionRuleSource s,
+                                               std::int64_t now) override {
+            return store->reinforceCorrection(w, c, d, s, now);
+        }
+        lk::expected<bool> rejectCorrection(std::u32string_view w, double p,
+                                            std::int64_t now) override {
+            return store->rejectCorrection(w, p, now);
+        }
+        lk::expected<void> noteCorrectionApplied(std::u32string_view w) override {
+            return store->noteCorrectionApplied(w);
+        }
+        lk::expected<void> blacklist(std::u32string_view p, std::int64_t now) override {
+            return store->blacklist(p, now);
+        }
+    };
+    static std::unique_ptr<ILexiconStore> make() {
+        auto owner = std::make_unique<Owner>();
+        owner->path =
+            std::filesystem::temp_directory_path() /
+            ("lankey-test-" + std::to_string(static_cast<long long>(std::rand())) + ".enc");
+        owner->store =
+            std::make_unique<SqliteLexiconStore>(owner->path.string(), &owner->protector);
+        EXPECT_TRUE(owner->store->open().has_value());
+        return owner;
+    }
+};
+
 template <class T>
 class LexiconStoreContract : public testing::Test {
 protected:
     std::unique_ptr<ILexiconStore> store = Factory<T>::make();
 };
 
-using Implementations = testing::Types<InMemoryLexiconStore, SqliteLexiconStore>;
+using Implementations =
+    testing::Types<InMemoryLexiconStore, SqliteLexiconStore, ProtectedSqliteStore>;
 TYPED_TEST_SUITE(LexiconStoreContract, Implementations);
 
 TYPED_TEST(LexiconStoreContract, StartsEmpty) {
@@ -329,6 +389,131 @@ TEST(SqliteLexiconStore, CleanupDropsStaleAndEnforcesLimit) {
     EXPECT_EQ(find(*all, U"stale"), nullptr);
     EXPECT_EQ(find(*all, U"old pair"), nullptr);
     EXPECT_EQ(find(*all, U"rare"), nullptr);
+}
+
+// -- Protected (sealed image) mode ----------------------------------------------------------
+
+struct TempEnc {
+    std::filesystem::path path;
+    TempEnc() {
+        path = std::filesystem::temp_directory_path() /
+               ("lankey-test-" + std::to_string(static_cast<long long>(std::rand())) + ".enc");
+        std::filesystem::remove(path);
+    }
+    ~TempEnc() {
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+        std::filesystem::remove(path.string() + ".tmp", ec);
+        std::filesystem::remove(legacy(), ec);
+    }
+    [[nodiscard]] std::string legacy() const {
+        std::string p = path.string();
+        return p.substr(0, p.size() - 4) + ".db";
+    }
+};
+
+std::string fileBytes(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::stringstream buf;
+    buf << in.rdbuf();
+    return buf.str();
+}
+
+TEST(ProtectedSqliteStore, PersistsSealedImageAndReopens) {
+    const TempEnc t;
+    tests::FakeDataProtector protector;
+    {
+        SqliteLexiconStore s(t.path.string(), &protector);
+        ASSERT_TRUE(s.open().has_value()) << s.open().error().message;
+        EXPECT_TRUE(s.isProtected());
+        ASSERT_TRUE(s.applyDeltas({{phrase({U"chương", U"trình"}), 3, 100}}).has_value());
+    }
+    ASSERT_TRUE(std::filesystem::exists(t.path));
+    const std::string bytes = fileBytes(t.path);
+    EXPECT_EQ(bytes.substr(0, 8), "LANKEYDB");
+    // Nothing readable on disk: not the SQLite header, not a table name, not the phrase.
+    EXPECT_EQ(bytes.find("SQLite format"), std::string::npos);
+    EXPECT_EQ(bytes.find("user_lexicon"), std::string::npos);
+    EXPECT_EQ(bytes.find("tr\xc3\xacnh"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(t.path.string() + ".tmp"));
+    EXPECT_GT(protector.protectCalls, 0);
+
+    SqliteLexiconStore again(t.path.string(), &protector);
+    ASSERT_TRUE(again.open().has_value()) << again.open().error().message;
+    const auto all = again.loadAll();
+    ASSERT_TRUE(all.has_value());
+    ASSERT_EQ(all->size(), 1u);
+    EXPECT_EQ((*all)[0].frequency, 3u);
+    EXPECT_EQ(*again.schemaVersion(), storage::latestSchemaVersion());
+}
+
+TEST(ProtectedSqliteStore, ImportsAndRemovesALegacyPlainDatabase) {
+    const TempEnc t;
+    {
+        SqliteLexiconStore plain(t.legacy());
+        ASSERT_TRUE(plain.open().has_value());
+        ASSERT_TRUE(plain.applyDeltas({{phrase({U"cũ"}), 7, 1}}).has_value());
+    }
+    ASSERT_TRUE(std::filesystem::exists(t.legacy()));
+    tests::FakeDataProtector protector;
+    SqliteLexiconStore s(t.path.string(), &protector);
+    ASSERT_TRUE(s.open().has_value()) << s.open().error().message;
+    const auto* e = find(*s.loadAll(), U"cũ");
+    ASSERT_NE(e, nullptr);
+    EXPECT_EQ(e->frequency, 7u);
+    // The readable copy (and any journal) is gone once the sealed image exists.
+    EXPECT_FALSE(std::filesystem::exists(t.legacy()));
+    EXPECT_FALSE(std::filesystem::exists(t.legacy() + "-wal"));
+    EXPECT_TRUE(std::filesystem::exists(t.path));
+}
+
+TEST(ProtectedSqliteStore, RefusesAnImageSealedByAnotherScheme) {
+    const TempEnc t;
+    tests::FakeDataProtector protector;
+    {
+        SqliteLexiconStore s(t.path.string(), &protector);
+        ASSERT_TRUE(s.open().has_value());
+    }
+    // Rewrite the header with a different scheme name.
+    std::string bytes = fileBytes(t.path);
+    ASSERT_GT(bytes.size(), 14u);
+    bytes[9] = 5;
+    bytes.replace(10, 4, "dpapi");
+    {
+        std::ofstream out(t.path, std::ios::binary | std::ios::trunc);
+        out << bytes;
+    }
+    SqliteLexiconStore s(t.path.string(), &protector);
+    const auto r = s.open();
+    ASSERT_FALSE(r.has_value());
+    EXPECT_EQ(r.error().code, model::Error::Code::Unsupported);
+    EXPECT_FALSE(s.isOpen());
+}
+
+TEST(ProtectedSqliteStore, ProtectorFailureKeepsTheOldImage) {
+    const TempEnc t;
+    tests::FakeDataProtector protector;
+    SqliteLexiconStore s(t.path.string(), &protector);
+    ASSERT_TRUE(s.open().has_value());
+    ASSERT_TRUE(s.applyDeltas({{phrase({U"a"}), 1, 1}}).has_value());
+    const std::string before = fileBytes(t.path);
+    protector.failNextCall();
+    EXPECT_FALSE(s.applyDeltas({{phrase({U"b"}), 1, 1}}).has_value());
+    EXPECT_EQ(fileBytes(t.path), before); // the write failed, the file did not change
+    EXPECT_FALSE(std::filesystem::exists(t.path.string() + ".tmp"));
+}
+
+TEST(ProtectedSqliteStore, EraseAllLeavesOnlyAnEmptySealedImage) {
+    const TempEnc t;
+    tests::FakeDataProtector protector;
+    SqliteLexiconStore s(t.path.string(), &protector);
+    ASSERT_TRUE(s.open().has_value());
+    ASSERT_TRUE(s.applyDeltas({{phrase({U"bí", U"mật"}), 5, 1}}).has_value());
+    ASSERT_TRUE(s.eraseAll().has_value());
+    EXPECT_TRUE(s.loadAll()->empty());
+    const std::string bytes = fileBytes(t.path);
+    EXPECT_EQ(bytes.find("m\xe1\xba\xadt"), std::string::npos);
+    EXPECT_FALSE(std::filesystem::exists(t.legacy()));
 }
 
 TEST(SqliteLexiconStore, OpenFailsOnBadPath) {

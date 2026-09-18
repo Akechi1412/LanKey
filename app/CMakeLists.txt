@@ -1,10 +1,28 @@
 # lankey.exe - wiring only (manual DI), no logic of its own.
 
+# DATA-POLICY.md is the single source of truth for "Dữ liệu của bạn": compiled into the
+# binary as one L"..." literal per line so the dialog can never drift from the document.
+set(LANKEY_POLICY_MD ${CMAKE_SOURCE_DIR}/DATA-POLICY.md)
+set(LANKEY_POLICY_INC ${CMAKE_CURRENT_BINARY_DIR}/generated/lankey/DataPolicy.inc)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${LANKEY_POLICY_MD})
+file(STRINGS ${LANKEY_POLICY_MD} _lankey_policy_lines ENCODING UTF-8)
+set(_lankey_policy_body "// Generated from DATA-POLICY.md by app/CMakeLists.txt. Do not edit.\n")
+foreach(_line IN LISTS _lankey_policy_lines)
+    string(REPLACE "\\" "\\\\" _line "${_line}")
+    string(REPLACE "\"" "\\\"" _line "${_line}")
+    string(APPEND _lankey_policy_body "L\"${_line}\\n\"\n")
+endforeach()
+file(WRITE ${LANKEY_POLICY_INC}.tmp "${_lankey_policy_body}")
+execute_process(COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${LANKEY_POLICY_INC}.tmp ${LANKEY_POLICY_INC})
+file(REMOVE ${LANKEY_POLICY_INC}.tmp)
+
 add_executable(lankey WIN32
     main.cpp
     App.cpp
     Log.cpp
 )
+target_include_directories(lankey PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(lankey
     PRIVATE
         lankey_core

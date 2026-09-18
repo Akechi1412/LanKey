@@ -1,5 +1,8 @@
 #include "core/storage/SqliteLexiconStore.h"
 
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <sqlite3.h>
 #include <string>
 #include <string_view>
@@ -71,9 +74,41 @@ model::CorrectionRuleSource sourceFrom(const char* s) noexcept {
     return CorrectionRuleSource::Learned;
 }
 
+// Protected image file: 8-byte magic, 1-byte format, 1-byte scheme length, scheme, sealed
+// bytes. The scheme name guards against feeding a file sealed one way to another
+// protector; the format byte leaves room for a master-password variant (PLAN 8.3 B).
+constexpr char kImageMagic[8] = {'L', 'A', 'N', 'K', 'E', 'Y', 'D', 'B'};
+constexpr std::uint8_t kImageFormat = 1;
+
+std::string legacyPathFor(const std::string& protectedPath) {
+    // "user_lexicon.enc" -> "user_lexicon.db"
+    const std::string suffix = ".enc";
+    if (protectedPath.size() > suffix.size() &&
+        protectedPath.compare(protectedPath.size() - suffix.size(), suffix.size(), suffix) == 0) {
+        return protectedPath.substr(0, protectedPath.size() - suffix.size()) + ".db";
+    }
+    return protectedPath + ".db";
+}
+
+lk::expected<std::vector<std::uint8_t>> readFile(const std::string& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return lk::unexpected(Error::make(Error::Code::Io, "cannot read " + file));
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+    return bytes;
+}
+
 } // namespace
 
-SqliteLexiconStore::SqliteLexiconStore(std::string path) : path_(std::move(path)) {}
+void secureZero(void* p, std::size_t n) noexcept {
+    // A volatile pointer keeps the stores; the optimiser may not drop them as dead.
+    auto* volatile bytes = static_cast<volatile unsigned char*>(p);
+    for (std::size_t i = 0; i < n; ++i)
+        bytes[i] = 0;
+}
+
+SqliteLexiconStore::SqliteLexiconStore(std::string path, IDataProtector* protector)
+    : path_(std::move(path)), protector_(protector) {}
 
 SqliteLexiconStore::~SqliteLexiconStore() {
     close();
@@ -100,6 +135,7 @@ lk::expected<void> SqliteLexiconStore::exec(const char* sql) const {
 
 lk::expected<void> SqliteLexiconStore::open() {
     if (db_ != nullptr) return {};
+    if (protector_ != nullptr) return openProtected();
     if (sqlite3_open_v2(path_.c_str(), &db_,
                         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
                         nullptr) != SQLITE_OK) {
@@ -124,8 +160,147 @@ lk::expected<void> SqliteLexiconStore::open() {
     return {};
 }
 
+lk::expected<void> SqliteLexiconStore::openProtected() {
+    if (sqlite3_open_v2(":memory:", &db_,
+                        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX,
+                        nullptr) != SQLITE_OK) {
+        const Error e = lastError("open");
+        close();
+        return lk::unexpected(e);
+    }
+    if (auto r = exec("PRAGMA foreign_keys = ON; PRAGMA temp_store = MEMORY;"); !r) {
+        close();
+        return r;
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::exists(path_, ec)) {
+        if (auto r = loadImage(path_); !r) {
+            close();
+            return r;
+        }
+    } else if (const std::string legacy = legacyPathFor(path_); fs::exists(legacy, ec)) {
+        if (auto r = importLegacy(legacy); !r) {
+            close();
+            return r;
+        }
+        legacyToRemove_ = legacy;
+    }
+    if (auto r = migrate(); !r) {
+        close();
+        return r;
+    }
+    // A fresh or migrated database is on disk before anyone relies on it being there.
+    if (auto r = persist(); !r) {
+        close();
+        return r;
+    }
+    return {};
+}
+
+lk::expected<void> SqliteLexiconStore::loadImage(const std::string& file) {
+    auto bytes = readFile(file);
+    if (!bytes) return lk::unexpected(bytes.error());
+    const std::size_t headerMin = sizeof(kImageMagic) + 2;
+    if (bytes->size() < headerMin ||
+        std::memcmp(bytes->data(), kImageMagic, sizeof(kImageMagic)) != 0) {
+        return lk::unexpected(Error::make(Error::Code::Corrupted, "not a LanKey database image"));
+    }
+    const std::uint8_t format = (*bytes)[sizeof(kImageMagic)];
+    const std::size_t schemeLen = (*bytes)[sizeof(kImageMagic) + 1];
+    if (format != kImageFormat || bytes->size() < headerMin + schemeLen) {
+        return lk::unexpected(
+            Error::make(Error::Code::Unsupported, "unknown database image format"));
+    }
+    const std::string_view scheme(reinterpret_cast<const char*>(bytes->data() + headerMin),
+                                  schemeLen);
+    if (scheme != protector_->scheme()) {
+        return lk::unexpected(Error::make(Error::Code::Unsupported,
+                                          "database image sealed with " + std::string(scheme)));
+    }
+    auto plain = protector_->unprotect(std::span<const std::uint8_t>(
+        bytes->data() + headerMin + schemeLen, bytes->size() - headerMin - schemeLen));
+    if (!plain) return lk::unexpected(plain.error());
+    // SQLite takes ownership of a buffer it can grow; the plaintext copy is wiped.
+    const auto size = static_cast<sqlite3_int64>(plain->size());
+    auto* buffer = static_cast<unsigned char*>(sqlite3_malloc64(static_cast<sqlite3_uint64>(size)));
+    if (buffer == nullptr) return lk::unexpected(Error::make(Error::Code::Io, "out of memory"));
+    std::memcpy(buffer, plain->data(), plain->size());
+    secureZero(plain->data(), plain->size());
+    if (sqlite3_deserialize(db_, "main", buffer, size, size,
+                            SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE) !=
+        SQLITE_OK) {
+        return lk::unexpected(lastError("deserialize"));
+    }
+    return {};
+}
+
+lk::expected<void> SqliteLexiconStore::importLegacy(const std::string& file) {
+    sqlite3* legacy = nullptr;
+    if (sqlite3_open_v2(file.c_str(), &legacy, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX,
+                        nullptr) != SQLITE_OK) {
+        sqlite3_close_v2(legacy);
+        return lk::unexpected(Error::make(Error::Code::Io, "cannot open " + file));
+    }
+    // The plain file ran in WAL mode; an in-memory database cannot, and the mode lives in
+    // the file header that is about to be copied. Fold the WAL in and switch first.
+    (void)sqlite3_exec(legacy, "PRAGMA journal_mode = DELETE", nullptr, nullptr, nullptr);
+    sqlite3_int64 size = 0;
+    unsigned char* image = sqlite3_serialize(legacy, "main", &size, 0);
+    sqlite3_close_v2(legacy);
+    if (image == nullptr)
+        return lk::unexpected(Error::make(Error::Code::Io, "cannot read " + file));
+    // sqlite3_serialize() memory is sqlite3_malloc()ed: hand it over as-is.
+    if (sqlite3_deserialize(db_, "main", image, size, size,
+                            SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE) !=
+        SQLITE_OK) {
+        return lk::unexpected(lastError("import"));
+    }
+    return {};
+}
+
+lk::expected<void> SqliteLexiconStore::persist() {
+    if (protector_ == nullptr || db_ == nullptr) return {};
+    sqlite3_int64 size = 0;
+    unsigned char* image = sqlite3_serialize(db_, "main", &size, 0);
+    if (image == nullptr) return lk::unexpected(lastError("serialize"));
+    auto sealed =
+        protector_->protect(std::span<const std::uint8_t>(image, static_cast<std::size_t>(size)));
+    secureZero(image, static_cast<std::size_t>(size));
+    sqlite3_free(image);
+    if (!sealed) return lk::unexpected(sealed.error());
+
+    const std::string_view scheme = protector_->scheme();
+    const std::string tmp = path_ + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return lk::unexpected(Error::make(Error::Code::Io, "cannot write " + tmp));
+        out.write(kImageMagic, sizeof(kImageMagic));
+        out.put(static_cast<char>(kImageFormat));
+        out.put(static_cast<char>(scheme.size()));
+        out.write(scheme.data(), static_cast<std::streamsize>(scheme.size()));
+        out.write(reinterpret_cast<const char*>(sealed->data()),
+                  static_cast<std::streamsize>(sealed->size()));
+        if (!out) return lk::unexpected(Error::make(Error::Code::Io, "cannot write " + tmp));
+    }
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::rename(tmp, path_, ec); // atomic replace on every platform we build for
+    if (ec) return lk::unexpected(Error::make(Error::Code::Io, "cannot replace " + path_));
+    if (!legacyToRemove_.empty()) {
+        // The plain file and its journals are the readable copy: gone once the sealed
+        // image is safely on disk.
+        fs::remove(legacyToRemove_, ec);
+        fs::remove(legacyToRemove_ + "-wal", ec);
+        fs::remove(legacyToRemove_ + "-shm", ec);
+        legacyToRemove_.clear();
+    }
+    return {};
+}
+
 void SqliteLexiconStore::close() noexcept {
     if (db_ != nullptr) {
+        (void)persist();
         sqlite3_close_v2(db_);
         db_ = nullptr;
     }
@@ -220,7 +395,8 @@ lk::expected<void> SqliteLexiconStore::applyDeltas(const LexiconDeltaBatch& batc
         }
         st.reset();
     }
-    return exec("COMMIT");
+    if (auto r = exec("COMMIT"); !r) return r;
+    return persist();
 }
 
 lk::expected<void> SqliteLexiconStore::eraseAll() {
@@ -233,8 +409,8 @@ lk::expected<void> SqliteLexiconStore::eraseAll() {
         return r;
     }
     if (auto r = exec("VACUUM"); !r) return r;
-    if (path_ != ":memory:") (void)exec("PRAGMA wal_checkpoint(TRUNCATE)");
-    return {};
+    if (protector_ == nullptr && path_ != ":memory:") (void)exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    return persist();
 }
 
 lk::expected<int> SqliteLexiconStore::cleanup(std::int64_t nowUnixSeconds) {
@@ -267,7 +443,10 @@ lk::expected<int> SqliteLexiconStore::cleanup(std::int64_t nowUnixSeconds) {
     }
     if (auto r = exec("COMMIT"); !r) return lk::unexpected(r.error());
     const int removed = sqlite3_total_changes(db_) - before;
-    if (removed > 0) (void)exec("VACUUM");
+    if (removed > 0) {
+        (void)exec("VACUUM");
+        if (auto r = persist(); !r) return lk::unexpected(r.error());
+    }
     return removed;
 }
 
@@ -331,7 +510,7 @@ lk::expected<void> SqliteLexiconStore::reinforceCorrection(std::u32string_view w
     sqlite3_bind_int64(st.get(), 5, nowUnixSeconds);
     sqlite3_bind_int64(st.get(), 6, nowUnixSeconds);
     if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("reinforceCorrection step"));
-    return {};
+    return persist();
 }
 
 lk::expected<bool> SqliteLexiconStore::rejectCorrection(std::u32string_view wrong, double penalty,
@@ -384,6 +563,7 @@ lk::expected<bool> SqliteLexiconStore::rejectCorrection(std::u32string_view wron
         blacklisted = true;
     }
     if (auto r = exec("COMMIT"); !r) return lk::unexpected(r.error());
+    if (auto r = persist(); !r) return lk::unexpected(r.error());
     return blacklisted;
 }
 
@@ -393,7 +573,7 @@ lk::expected<void> SqliteLexiconStore::noteCorrectionApplied(std::u32string_view
     if (!st.ok()) return lk::unexpected(lastError("noteCorrectionApplied"));
     bindText(st.get(), 1, text::toUtf8(wrong));
     if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("noteCorrectionApplied step"));
-    return {};
+    return persist();
 }
 
 lk::expected<void> SqliteLexiconStore::blacklist(std::u32string_view phrase,
@@ -404,7 +584,7 @@ lk::expected<void> SqliteLexiconStore::blacklist(std::u32string_view phrase,
     bindText(st.get(), 1, text::toUtf8(phrase));
     sqlite3_bind_int64(st.get(), 2, nowUnixSeconds);
     if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("blacklist step"));
-    return {};
+    return persist();
 }
 
 } // namespace lankey::core::storage

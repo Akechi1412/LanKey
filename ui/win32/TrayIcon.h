@@ -23,6 +23,7 @@ public:
         std::function<void(bool)> onSuggestionsEnabled;
         std::function<void(bool)> onAutoCorrectEnabled;
         std::function<void()> onEraseAllData;
+        std::function<void()> onShowData; // "Dữ liệu của bạn"
         std::function<void()> onQuit;
     };
 

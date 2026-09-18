@@ -28,6 +28,11 @@ jobs:
         run: cmake --build --preset win-debug
       - name: Test
         run: ctest --preset win-debug
+      - name: Build (release)
+        run: cmake --build --preset win-release
+      - name: Audit - no networking imports (DATA-POLICY.md)
+        shell: pwsh
+        run: ./tools/audit/check-no-network.ps1 -Binary build/win/app/Release/lankey.exe
 
   # Proves lankey_core (and everything it drags in) has no Win32 dependency, and runs the
   # suite under ASan/UBSan.

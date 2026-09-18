@@ -1,6 +1,8 @@
 // Sanity checks for the fakes themselves - and, by including every one of them, a
 // compile check that every interface header in core/interfaces/ is self-contained.
 
+#include <algorithm>
+
 #include <gtest/gtest.h>
 
 #include "core/model/AtomicSnapshot.h"
@@ -8,10 +10,10 @@
 #include "tests/fakes/FakeCaretResolver.h"
 #include "tests/fakes/FakeClock.h"
 #include "tests/fakes/FakeCorrector.h"
+#include "tests/fakes/FakeDataProtector.h"
 #include "tests/fakes/FakeEngine.h"
 #include "tests/fakes/FakeFocusObserver.h"
 #include "tests/fakes/FakeKeySource.h"
-#include "tests/fakes/FakeKeyStore.h"
 #include "tests/fakes/FakeSuggestionProvider.h"
 #include "tests/fakes/FakeTextSink.h"
 #include "tests/fakes/InMemoryLexiconStore.h"
@@ -52,17 +54,20 @@ TEST(InMemoryLexiconStore, LoadAllAndEraseAll) {
     EXPECT_EQ(store.size(), 0u);
 }
 
-TEST(FakeKeyStore, StableSecretPerIdAndFailureInjection) {
-    FakeKeyStore ks;
-    const auto a = ks.loadOrCreate("db");
-    const auto b = ks.loadOrCreate("db");
-    ASSERT_TRUE(a.has_value() && b.has_value());
-    EXPECT_EQ(*a, *b);
-    EXPECT_EQ(a->size(), 32u);
-    ks.failNextCall();
-    const auto c = ks.loadOrCreate("db");
-    ASSERT_FALSE(c.has_value());
-    EXPECT_EQ(c.error().code, core::model::Error::Code::Io);
+TEST(FakeDataProtector, RoundTripsHidesPlaintextAndFails) {
+    FakeDataProtector p;
+    const std::vector<std::uint8_t> plain = {'s', 'e', 'c', 'r', 'e', 't'};
+    const auto sealed = p.protect(plain);
+    ASSERT_TRUE(sealed.has_value());
+    EXPECT_EQ(std::search(sealed->begin(), sealed->end(), plain.begin(), plain.end()),
+              sealed->end());
+    const auto back = p.unprotect(*sealed);
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(*back, plain);
+    EXPECT_FALSE(p.unprotect(plain).has_value()); // not something we sealed
+    p.failNextCall();
+    EXPECT_FALSE(p.protect(plain).has_value());
+    EXPECT_EQ(p.scheme(), "fake");
 }
 
 TEST(FakeClock, AdvancesBothClocks) {

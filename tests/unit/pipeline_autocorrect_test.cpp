@@ -232,6 +232,19 @@ TEST_F(AutoCorrectPipelineTest, PartialDeleteGluesTheKeptHeadBackOn) {
     EXPECT_EQ(rig.screen(), U"Sua lob2 ");
 }
 
+TEST_F(AutoCorrectPipelineTest, CommitsCarryTheSeparatorsBetweenSyllables) {
+    // "." ends the phrase (sentence punctuation); "-" and "/" only end the syllable, so
+    // a token like "ab-cd/ef" arrives as three syllables with its separators.
+    rig.type("ab-cd/ef ");
+    ASSERT_EQ(lastCommit().window.committed.size(), 3u);
+    ASSERT_EQ(lastCommit().separators.size(), 2u);
+    EXPECT_EQ(lastCommit().separators[0], U"-");
+    EXPECT_EQ(lastCommit().separators[1], U"/");
+    rig.type("a,  b ");
+    ASSERT_GE(lastCommit().separators.size(), 1u);
+    EXPECT_EQ(lastCommit().separators.back(), U",  ");
+}
+
 TEST_F(AutoCorrectPipelineTest, DeletingIntoUnknownTextMarksTheNextCommitUncertain) {
     rig.sink.typeThrough(U'x'); // text that was there before LanKey
     rig.type("\b");

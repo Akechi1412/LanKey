@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "core/interfaces/IDataProtector.h"
 #include "core/interfaces/ILexiconStore.h"
 
 struct sqlite3;
@@ -16,12 +17,18 @@ namespace lankey::core::storage {
 // before any other call. The same behaviour is specified by the tests that also run
 // against InMemoryLexiconStore.
 //
-// Phase 3 swaps the sqlite3 build for SQLCipher and adds a key from IKeyStore; the public
-// surface of this class does not change.
+// Two ways to persist (ADR-012):
+//   - plain file: `path` is an ordinary SQLite database (WAL journal, VACUUM on cleanup);
+//   - protected (a protector is given): the database lives in memory and `path` holds
+//     its image sealed by the protector (DPAPI on Windows). Every write persists the whole
+//     image atomically (temp file + rename); nothing readable ever touches the disk and
+//     there is no journal to leave behind. A plain file from an earlier version found at
+//     `path` minus its ".enc" suffix is imported once and deleted after the first
+//     successful persist.
+// ":memory:" without a protector is a private in-memory database (tests).
 class SqliteLexiconStore final : public ILexiconStore {
 public:
-    // ":memory:" gives a private in-memory database (tests).
-    explicit SqliteLexiconStore(std::string path);
+    explicit SqliteLexiconStore(std::string path, IDataProtector* protector = nullptr);
     ~SqliteLexiconStore() override;
 
     SqliteLexiconStore(const SqliteLexiconStore&) = delete;
@@ -52,13 +59,23 @@ public:
 
     [[nodiscard]] lk::expected<int> schemaVersion() const;
     [[nodiscard]] const std::string& path() const noexcept { return path_; }
+    [[nodiscard]] bool isProtected() const noexcept { return protector_ != nullptr; }
+
+    // Writes the in-memory image to disk (protected mode; no-op otherwise). Called by every
+    // mutating operation; public so the owner can force it (shutdown, tests).
+    [[nodiscard]] lk::expected<void> persist();
 
 private:
     [[nodiscard]] lk::expected<void> exec(const char* sql) const;
     [[nodiscard]] lk::expected<void> migrate();
+    [[nodiscard]] lk::expected<void> openProtected();
+    [[nodiscard]] lk::expected<void> loadImage(const std::string& file);
+    [[nodiscard]] lk::expected<void> importLegacy(const std::string& file);
     [[nodiscard]] model::Error lastError(const char* what) const;
 
     std::string path_;
+    IDataProtector* protector_ = nullptr;
+    std::string legacyToRemove_; // plain file imported at open(); deleted after persist()
     sqlite3* db_ = nullptr;
 };
 

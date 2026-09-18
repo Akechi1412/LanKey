@@ -29,6 +29,19 @@ public:
     [[nodiscard]] PrivacyVerdict evaluate(const model::SyllableCommitted& c) const override;
 };
 
+// Layer 3: shapes that are never prose, judged on the on-screen tokens (syllables glued
+// back together across "@", ".", "/", "-" separators): e-mail addresses, anything with
+// 3+ digits next to symbols, 13-19 digit runs (cards), 9/12 digits (ID numbers), tokens of
+// 20+ characters, and high-entropy strings (> 3.5 bits per character, random passwords
+// and keys). PLAN 8.2.
+class ContentHeuristicRule final : public IPrivacyRule {
+public:
+    [[nodiscard]] PrivacyVerdict evaluate(const model::SyllableCommitted& c) const override;
+
+    // One token as it stands on screen. Exposed for tests.
+    [[nodiscard]] static bool looksSensitive(std::u32string_view token);
+};
+
 // Layer 4: only strings made purely of letters are learnable. Digits, punctuation and
 // symbols inside a syllable mean codes, identifiers, passwords - never Vietnamese words.
 // Cheapest rule and the one that removes most risk; on from the first day of dogfooding.

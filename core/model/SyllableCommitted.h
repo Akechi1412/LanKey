@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "core/model/FocusContext.h"
@@ -19,6 +20,12 @@ struct SyllableCommitted {
     FocusContext focus;
     std::int64_t timestampMs = 0;
     std::uint64_t generation = 0; // InputBuffer generation AFTER the terminator
+
+    // The boundary characters typed between consecutive window syllables (size = count-1):
+    // " " normally; "@" or "." when the syllables are really one on-screen token such as an
+    // e-mail address or URL that the boundary detector split up. Privacy rules glue them
+    // back together before judging.
+    std::vector<std::u32string> separators;
 
     // Non-empty when this commit completed a retype: the user deleted the last
     // `retypedFrom.size()` committed syllables and typed the same number again. The window

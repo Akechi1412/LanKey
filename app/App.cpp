@@ -1,5 +1,6 @@
 #include "app/App.h"
 
+#include <shellapi.h>
 #include <shlobj.h>
 #include <string>
 #include <utility>
@@ -86,8 +87,10 @@ bool App::initialise(HINSTANCE instance) {
     }
     engine_.configure(settings_.engine);
 
+    // The lexicon is sealed with DPAPI (ADR-012): user_lexicon.enc is unreadable outside
+    // this Windows account; an older plain user_lexicon.db is imported and removed.
     store_ = std::make_unique<core::storage::SqliteLexiconStore>(
-        (dataDir_ / L"user_lexicon.db").string());
+        (dataDir_ / L"user_lexicon.enc").string(), &protector_);
     if (auto opened = store_->open(); !opened) {
         logf("database: %s", opened.error().message.c_str());
         MessageBoxW(nullptr,
@@ -144,6 +147,7 @@ bool App::initialise(HINSTANCE instance) {
     tray.onSuggestionsEnabled = [this](bool on) { setSuggestionsEnabled(on); };
     tray.onAutoCorrectEnabled = [this](bool on) { setAutoCorrectEnabled(on); };
     tray.onEraseAllData = [this] { confirmEraseAllData(); };
+    tray.onShowData = [this] { showDataDialog(); };
     tray.onQuit = [] { PostQuitMessage(0); };
     if (!tray_.create(instance, std::move(tray))) {
         logf("tray: creation failed %s", platform::win32::lastErrorMessage(GetLastError()).c_str());
@@ -289,8 +293,11 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     case kMsgLanguage:
+        // Ctrl+Shift on the hook thread already flipped the pipeline; mirror it here and
+        // tell the user - a toast, not a sound.
         settings_.vietnameseEnabled = wParam != 0;
         refreshTray();
+        toast_.show(GetModuleHandleW(nullptr), settings_.vietnameseEnabled);
         saveSettings();
         return 0;
     case WM_CLOSE:
@@ -351,6 +358,7 @@ void App::applyVietnameseEnabled(bool enabled) {
     pipeline_->setVietnameseEnabled(enabled);
     settings_.vietnameseEnabled = enabled;
     refreshTray();
+    toast_.show(GetModuleHandleW(nullptr), enabled);
     saveSettings();
 }
 
@@ -380,6 +388,27 @@ void App::setAutoCorrectEnabled(bool enabled) {
     worker_->updateSettings(settings_);
     refreshTray();
     saveSettings();
+}
+
+namespace {
+// DATA-POLICY.md, verbatim (see app/CMakeLists.txt).
+constexpr const wchar_t* kDataPolicyLines[] = {
+#include "lankey/DataPolicy.inc"
+};
+} // namespace
+
+void App::showDataDialog() {
+    std::wstring text;
+    for (const auto* line : kDataPolicyLines)
+        text += line;
+    ui::win32::DataDialog::Callbacks callbacks;
+    callbacks.onOpenFolder = [this] { openDataFolder(); };
+    callbacks.onEraseAllData = [this] { confirmEraseAllData(); };
+    dataDialog_.show(GetModuleHandleW(nullptr), text, std::move(callbacks));
+}
+
+void App::openDataFolder() {
+    ShellExecuteW(nullptr, L"open", dataDir_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 void App::confirmEraseAllData() {

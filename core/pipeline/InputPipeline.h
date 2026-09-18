@@ -161,8 +161,9 @@ private:
     // Lets Backspace be matched to syllable edges and corrections retype exact spans.
     struct Span {
         int typedLength = 0;
-        int trailing = 0;        // boundary characters after the syllable (usually 1)
-        char32_t terminator = 0; // the first of them
+        int trailing = 0;         // boundary characters after the syllable (usually 1)
+        char32_t terminator = 0;  // the first of them
+        std::u32string separator; // all of them, in order
     };
 
     // The user is deleting back into committed text. Two things follow from tracking it:

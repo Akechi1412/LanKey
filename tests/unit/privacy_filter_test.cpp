@@ -47,6 +47,34 @@ TEST(LettersOnlyRule, AcceptsVietnameseRejectsAnythingElse) {
     EXPECT_EQ(rule.evaluate(event({U"x1", U"chương"})), PrivacyVerdict::Reject);
 }
 
+TEST(ContentHeuristicRule, TokenShapesThatAreNeverProse) {
+    using R = ContentHeuristicRule;
+    EXPECT_FALSE(R::looksSensitive(U"chương"));
+    EXPECT_FALSE(R::looksSensitive(U"hello"));
+    EXPECT_TRUE(R::looksSensitive(U"internationalization")); // 20 chars: a key more often
+    EXPECT_TRUE(R::looksSensitive(U"user@example.com"));
+    EXPECT_TRUE(R::looksSensitive(U"4111111111111111"));            // 16 digits
+    EXPECT_TRUE(R::looksSensitive(U"079123456789"));                // 12-digit CCCD
+    EXPECT_TRUE(R::looksSensitive(U"123456789"));                   // 9-digit CMND
+    EXPECT_TRUE(R::looksSensitive(U"P@ss-w0rd12"));                 // digits + symbols
+    EXPECT_TRUE(R::looksSensitive(U"xK9#mQ2$vL7pR4wZ"));            // high entropy
+    EXPECT_TRUE(R::looksSensitive(U"https://github.com/lankey/x")); // >= 20 chars
+    EXPECT_FALSE(R::looksSensitive(U"2024"));                       // a year on its own
+}
+
+TEST(ContentHeuristicRule, GluesSplitTokensBackTogether) {
+    // "user@example.com" reaches the worker as three syllables with "@" and "." between.
+    ContentHeuristicRule rule;
+    auto e = event({U"user", U"example", U"com"});
+    e.separators = {U"@", U"."};
+    EXPECT_EQ(rule.evaluate(e), PrivacyVerdict::Reject);
+    // The same syllables as words in a sentence are fine.
+    e.separators = {U" ", U" "};
+    EXPECT_EQ(rule.evaluate(e), PrivacyVerdict::Accept);
+    // No separators known: treated as words.
+    EXPECT_EQ(rule.evaluate(event({U"user", U"example", U"com"})), PrivacyVerdict::Accept);
+}
+
 TEST(PrivacyFilter, StandardStackCombinesRules) {
     model::PrivacySettings settings;
     settings.excludedApps = {"secret.exe"};
@@ -56,6 +84,9 @@ TEST(PrivacyFilter, StandardStackCombinesRules) {
     EXPECT_EQ(filter.evaluate(event({U"chương"}, "cmd.exe")), PrivacyVerdict::Reject);
     EXPECT_EQ(filter.evaluate(event({U"chương"}, "notepad.exe", true)), PrivacyVerdict::Reject);
     EXPECT_EQ(filter.evaluate(event({U"ch1"})), PrivacyVerdict::Reject);
+    auto mail = event({U"me", U"mail", U"vn"});
+    mail.separators = {U"@", U"."};
+    EXPECT_EQ(filter.evaluate(mail), PrivacyVerdict::Reject);
 }
 
 TEST(PrivacyFilter, RejectWinsOverNoAutoCorrect) {

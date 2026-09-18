@@ -138,6 +138,7 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
         // A second space, punctuation after a space: one more character on screen behind
         // the last syllable.
         ++spans_.back().trailing;
+        spans_.back().separator.push_back(key.unicode);
     }
     if (boundary == Boundary::Paragraph) {
         window_.reset();
@@ -216,7 +217,8 @@ void InputPipeline::commitSyllable(const std::u32string& composed, bool transfor
     text += composed;
 
     window_.commit(Syllable::fromComposed(text));
-    spans_.push_back({static_cast<int>(text.size()), terminator != 0 ? 1 : 0, terminator});
+    spans_.push_back({static_cast<int>(text.size()), terminator != 0 ? 1 : 0, terminator,
+                      terminator != 0 ? std::u32string(1, terminator) : std::u32string()});
     trimSpans();
     ++stats_.commits;
     lastCommitMs_ = deps_.clock.nowMonotonicMs();
@@ -262,6 +264,11 @@ void InputPipeline::commitSyllable(const std::u32string& composed, bool transfor
     event.window = window_; // copy: the worker must never see our live window
     event.retypedFrom = std::move(retypedFrom);
     event.uncertain = uncertain;
+    if (spans_.size() == window_.committed.size() && spans_.size() > 1) {
+        event.separators.reserve(spans_.size() - 1);
+        for (std::size_t i = 0; i + 1 < spans_.size(); ++i)
+            event.separators.push_back(spans_[i].separator);
+    }
     event.terminator = terminator;
     event.vietnameseTransformApplied = transformApplied;
     if (const auto focus = deps_.focus.current()) {
@@ -368,7 +375,7 @@ void InputPipeline::selectSuggestion(std::size_t index, std::uint64_t generation
     const std::size_t first = syllables.size() > inserted ? syllables.size() - inserted : 0;
     for (std::size_t i = first; i < syllables.size(); ++i) {
         window_.commit(syllables[i]);
-        spans_.push_back({static_cast<int>(syllables[i].text.size()), 1, U' '});
+        spans_.push_back({static_cast<int>(syllables[i].text.size()), 1, U' ', U" "});
     }
     trimSpans();
     abandonRetype();

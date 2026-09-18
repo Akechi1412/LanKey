@@ -19,6 +19,7 @@ add_executable(lankey_tests
     unit/input_pipeline_test.cpp
     unit/fakes_test.cpp
     unit/privacy_filter_test.cpp
+    unit/data_policy_test.cpp
     unit/learning_recorder_test.cpp
     unit/phrase_trie_test.cpp
     unit/suggestion_engine_test.cpp
@@ -42,7 +43,8 @@ target_link_libraries(lankey_tests
         unofficial::sqlite3::sqlite3   # lexicon_store_test pokes the schema directly
 )
 target_compile_definitions(lankey_tests PRIVATE
-    LANKEY_REPLAY_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replay/fixtures")
+    LANKEY_REPLAY_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/replay/fixtures"
+    LANKEY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Link whichever adapters are enabled so engine_registry.cpp can see them.
 if(LANKEY_ENGINE_OPENKEY)

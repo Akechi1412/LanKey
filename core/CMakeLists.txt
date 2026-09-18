@@ -77,7 +77,7 @@ target_sources(lankey_core PUBLIC
         interfaces/ICorrector.h
         interfaces/IFocusObserver.h
         interfaces/IKeySource.h
-        interfaces/IKeyStore.h
+        interfaces/IDataProtector.h
         interfaces/ILexiconStore.h
         interfaces/IPrivacyRule.h
         interfaces/ISettingsChannel.h

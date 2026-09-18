@@ -21,6 +21,7 @@ public:
         std::function<void()> onToggleVietnamese;
         std::function<void(core::model::InputMethod)> onInputMethod;
         std::function<void(bool)> onSuggestionsEnabled;
+        std::function<void(bool)> onAutoCorrectEnabled;
         std::function<void()> onEraseAllData;
         std::function<void()> onQuit;
     };
@@ -35,7 +36,8 @@ public:
     void destroy();
 
     // Reflect state in the icon/tooltip/menu.
-    void setState(bool vietnamese, core::model::InputMethod method, bool suggestions);
+    void setState(bool vietnamese, core::model::InputMethod method, bool suggestions,
+                  bool autoCorrect);
     void showBalloon(const std::wstring& title, const std::wstring& text);
 
     [[nodiscard]] HWND window() const noexcept { return hwnd_; }
@@ -55,6 +57,7 @@ private:
     Callbacks callbacks_;
     bool vietnamese_ = true;
     bool suggestions_ = true;
+    bool autoCorrect_ = true;
     core::model::InputMethod method_ = core::model::InputMethod::Telex;
 };
 

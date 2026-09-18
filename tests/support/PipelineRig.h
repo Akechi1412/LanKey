@@ -27,7 +27,12 @@ public:
               core::pipeline::InputPipeline::Handlers{
                   [this](core::model::SyllableCommitted&& c) { commits.push_back(std::move(c)); },
                   [this](const core::pipeline::PopupState& p) { popups.push_back(p); },
-                  [this](const core::model::Phrase& p) { selections.push_back(p); }}) {
+                  [this](const core::model::Phrase& p) { selections.push_back(p); },
+                  [this](const std::u32string& w) { correctionsApplied.push_back(w); },
+                  [this](const std::u32string& w, const std::u32string& c) {
+                      correctionsRejected.push_back(w);
+                      correctionsRejectedTo.push_back(c);
+                  }}) {
         keys.setHandler([this](const core::model::KeyEvent& k) { return pipeline_.onKey(k); });
         keys.start();
         focus.onChange([this](const core::model::FocusContext& f) { pipeline_.onFocusChanged(f); });
@@ -69,6 +74,9 @@ public:
     std::vector<core::model::SyllableCommitted> commits;
     std::vector<core::pipeline::PopupState> popups;
     std::vector<core::model::Phrase> selections;
+    std::vector<std::u32string> correctionsApplied;
+    std::vector<std::u32string> correctionsRejected;
+    std::vector<std::u32string> correctionsRejectedTo;
 
 private:
     core::pipeline::InputPipeline pipeline_;

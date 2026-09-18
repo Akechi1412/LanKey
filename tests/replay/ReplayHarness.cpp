@@ -6,13 +6,19 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/model/Correction.h"
+#include "core/model/Thresholds.h"
+#include "core/smart/correct/AutoCorrectEngine.h"
+#include "core/smart/correct/ManualCorrectionDetector.h"
 #include "core/text/Utf.h"
 
+#include "tests/fakes/InMemoryLexiconStore.h"
 #include "tests/support/PipelineRig.h"
 #include "tests/support/Typist.h"
 
 namespace lankey::tests {
 
+using core::model::AutoCorrectLevel;
 using core::model::Error;
 using core::model::KeyEvent;
 using core::model::Modifier;
@@ -129,6 +135,32 @@ lk::expected<std::vector<ReplayHarness::Event>> ReplayHarness::parse(const std::
                 e.kind = Event::Kind::Wait;
                 e.waitMs = j.at("wait").get<int>();
                 events.push_back(e);
+            } else if (j.contains("autocorrect")) {
+                Event e;
+                e.kind = Event::Kind::AutoCorrect;
+                const auto level = j.at("autocorrect").get<std::string>();
+                if (level == "off") {
+                    e.level = AutoCorrectLevel::Off;
+                } else if (level == "cautious") {
+                    e.level = AutoCorrectLevel::Cautious;
+                } else if (level == "balanced") {
+                    e.level = AutoCorrectLevel::Balanced;
+                } else if (level == "aggressive") {
+                    e.level = AutoCorrectLevel::Aggressive;
+                } else {
+                    return fail("keylog line " + std::to_string(lineNo) +
+                                ": unknown autocorrect level " + level);
+                }
+                e.lag = j.value("lag", 0);
+                events.push_back(e);
+            } else if (j.contains("lexicon")) {
+                Event e;
+                e.kind = Event::Kind::Lexicon;
+                for (const auto& item : j.at("lexicon")) {
+                    e.lexicon.emplace_back(fromUtf8(item.at(0).get<std::string>()),
+                                           item.at(1).get<std::uint32_t>());
+                }
+                events.push_back(e);
             } else {
                 return fail("keylog line " + std::to_string(lineNo) + ": unknown event");
             }
@@ -141,12 +173,82 @@ lk::expected<std::vector<ReplayHarness::Event>> ReplayHarness::parse(const std::
 
 lk::expected<ReplayResult> ReplayHarness::run(const std::vector<Event>& events,
                                               core::IVietnameseEngine& engine) {
+    using core::model::Correction;
+    using core::model::Thresholds;
+    using core::smart::AutoCorrectEngine;
+    using core::smart::BaseIndex;
+    using core::smart::BaseSyllableSet;
+    using core::smart::CorrectionSnapshot;
+    using core::smart::ManualCorrectionDetector;
+
     PipelineRig rig(engine);
     rig.focus.setFocus({"replay.exe", false, 1});
+
+    // A synchronous stand-in for SmartWorker + DB thread: the real AutoCorrectEngine over
+    // the real dictionary, correction_map in memory, answers delivered `lag` key events
+    // after the commit so stale-generation drops can be replayed too.
+    static const auto baseIndex = BaseIndex::build(BaseSyllableSet::builtin());
+    AutoCorrectEngine corrector;
+    corrector.publishBase(baseIndex);
+    InMemoryLexiconStore store;
+    int lag = 0;
+    bool autoCorrectOn = false;
+    struct Pending {
+        Correction correction;
+        int keysToGo;
+    };
+    std::vector<Pending> pending;
+    std::size_t seenCommits = 0;
+    std::size_t seenRejections = 0;
+
+    const auto republish = [&] {
+        corrector.publish(CorrectionSnapshot::build(
+            *store.loadAll(), *store.loadCorrections(), *store.loadBlacklist(),
+            BaseSyllableSet::builtin(), rig.clock.nowUnixSeconds()));
+    };
+    const auto afterKey = [&] {
+        // Corrections whose "worker" answer arrives now.
+        for (auto it = pending.begin(); it != pending.end();) {
+            if (it->keysToGo-- <= 0) {
+                rig.pipeline().applyCorrection(it->correction);
+                it = pending.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (; seenRejections < rig.correctionsRejected.size(); ++seenRejections) {
+            (void)store.rejectCorrection(rig.correctionsRejected[seenRejections],
+                                         Thresholds::kCorrectionRejectPenalty,
+                                         rig.clock.nowUnixSeconds());
+            republish();
+        }
+        for (; seenCommits < rig.commits.size(); ++seenCommits) {
+            const auto& c = rig.commits[seenCommits];
+            if (!c.retypedFrom.empty()) {
+                if (const auto fix =
+                        ManualCorrectionDetector::detect(c, BaseSyllableSet::builtin())) {
+                    (void)store.reinforceCorrection(
+                        fix->wrong, fix->correct, Thresholds::kCorrectionLearnStep,
+                        core::model::CorrectionRuleSource::Learned, rig.clock.nowUnixSeconds());
+                    republish();
+                }
+            }
+            if (!autoCorrectOn) continue;
+            if (auto correction = corrector.check(c)) {
+                if (lag == 0) {
+                    rig.pipeline().applyCorrection(*correction);
+                } else {
+                    pending.push_back({std::move(*correction), lag});
+                }
+            }
+        }
+    };
+
     for (const auto& e : events) {
         switch (e.kind) {
         case Event::Kind::Key:
             rig.press(e.key);
+            afterKey();
             break;
         case Event::Kind::Focus:
             rig.focus.setFocus({e.app, e.password, 0});
@@ -157,6 +259,28 @@ lk::expected<ReplayResult> ReplayHarness::run(const std::vector<Event>& events,
         case Event::Kind::Wait:
             rig.clock.advanceMs(e.waitMs);
             break;
+        case Event::Kind::AutoCorrect: {
+            core::model::AutoCorrectSettings settings;
+            settings.level = e.level;
+            corrector.setSettings(settings);
+            autoCorrectOn = e.level != AutoCorrectLevel::Off;
+            lag = e.lag;
+            republish();
+            break;
+        }
+        case Event::Kind::Lexicon: {
+            core::model::LexiconDeltaBatch batch;
+            for (const auto& [syllable, freq] : e.lexicon) {
+                core::model::LexiconDelta d;
+                d.phrase.syllables.push_back(core::model::Syllable::fromComposed(syllable));
+                d.frequencyDelta = static_cast<std::int32_t>(freq);
+                d.usedAt = rig.clock.nowUnixSeconds();
+                batch.push_back(std::move(d));
+            }
+            (void)store.applyDeltas(batch);
+            republish();
+            break;
+        }
         }
     }
     ReplayResult result;

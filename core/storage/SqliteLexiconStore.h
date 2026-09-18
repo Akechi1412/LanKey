@@ -38,6 +38,17 @@ public:
     // Housekeeping (PLAN 5.6): drop stale low-frequency entries, enforce the hard limit,
     // then VACUUM. Returns the number of rows removed.
     [[nodiscard]] lk::expected<int> cleanup(std::int64_t nowUnixSeconds) override;
+    [[nodiscard]] lk::expected<std::vector<model::CorrectionRule>> loadCorrections() override;
+    [[nodiscard]] lk::expected<std::vector<std::u32string>> loadBlacklist() override;
+    [[nodiscard]] lk::expected<void> reinforceCorrection(std::u32string_view wrong,
+                                                         std::u32string_view correct, double delta,
+                                                         model::CorrectionRuleSource source,
+                                                         std::int64_t nowUnixSeconds) override;
+    [[nodiscard]] lk::expected<bool> rejectCorrection(std::u32string_view wrong, double penalty,
+                                                      std::int64_t nowUnixSeconds) override;
+    [[nodiscard]] lk::expected<void> noteCorrectionApplied(std::u32string_view wrong) override;
+    [[nodiscard]] lk::expected<void> blacklist(std::u32string_view phrase,
+                                               std::int64_t nowUnixSeconds) override;
 
     [[nodiscard]] lk::expected<int> schemaVersion() const;
     [[nodiscard]] const std::string& path() const noexcept { return path_; }

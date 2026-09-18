@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "core/model/FocusContext.h"
 #include "core/model/Phrase.h"
@@ -18,6 +19,16 @@ struct SyllableCommitted {
     FocusContext focus;
     std::int64_t timestampMs = 0;
     std::uint64_t generation = 0; // InputBuffer generation AFTER the terminator
+
+    // Non-empty when this commit completed a retype: the user deleted the last
+    // `retypedFrom.size()` committed syllables and typed the same number again. The window
+    // already holds the new syllables; these are the old ones (folded). What the
+    // ManualCorrectionDetector learns correction_map from.
+    std::vector<Syllable> retypedFrom;
+    // The user deleted into text the pipeline never saw (typed before LanKey, or past the
+    // phrase window), so `syllable()` may be only the tail of what is on screen. Never
+    // corrected, never learned.
+    bool uncertain = false;
 
     // The syllable that was just committed (newest in the window).
     [[nodiscard]] const Syllable& syllable() const { return window.committed.back(); }

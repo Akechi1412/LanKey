@@ -43,6 +43,10 @@ void LearningRecorder::recordSelection(const Phrase& phrase) {
     if (learnable(phrase)) add(phrase, kSelectionWeight);
 }
 
+void LearningRecorder::adjust(const Phrase& phrase, std::int32_t delta) {
+    if (!phrase.syllables.empty()) add(phrase, delta);
+}
+
 void LearningRecorder::flushIfDue() {
     if (pending_.empty()) return;
     const bool bySize = pending_.size() >= static_cast<std::size_t>(Thresholds::kFlushBatchSize);

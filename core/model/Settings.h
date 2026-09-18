@@ -30,6 +30,10 @@ struct SuggestionSettings {
 
 struct AutoCorrectSettings {
     AutoCorrectLevel level = AutoCorrectLevel::Cautious;
+    // Executable names (case-insensitive) where nothing is ever corrected. Empty by
+    // default: the transform guard already keeps identifiers, commands and English out of
+    // reach, and Vietnamese is typed in editors and terminals too (comments, commits, chat).
+    std::vector<std::string> excludedApps;
 
     friend bool operator==(const AutoCorrectSettings&, const AutoCorrectSettings&) = default;
 };

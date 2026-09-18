@@ -41,23 +41,34 @@ private:
     sqlite3_stmt* stmt_ = nullptr;
 };
 
-Phrase phraseFromJoined(std::u32string_view joined) {
-    Phrase p;
-    std::u32string cur;
-    for (const char32_t c : joined) {
-        if (c == U' ') {
-            if (!cur.empty()) p.syllables.push_back(Syllable::fromComposed(cur));
-            cur.clear();
-        } else {
-            cur.push_back(c);
-        }
-    }
-    if (!cur.empty()) p.syllables.push_back(Syllable::fromComposed(cur));
-    return p;
-}
-
 void bindText(sqlite3_stmt* stmt, int index, const std::string& utf8) {
     sqlite3_bind_text(stmt, index, utf8.c_str(), static_cast<int>(utf8.size()), SQLITE_TRANSIENT);
+}
+
+std::u32string columnU32(sqlite3_stmt* stmt, int index) {
+    const auto* p = reinterpret_cast<const char*>(sqlite3_column_text(stmt, index));
+    return p != nullptr ? text::fromUtf8(p) : std::u32string{};
+}
+
+const char* sourceName(model::CorrectionRuleSource s) noexcept {
+    switch (s) {
+    case model::CorrectionRuleSource::User:
+        return "user";
+    case model::CorrectionRuleSource::Builtin:
+        return "builtin";
+    case model::CorrectionRuleSource::Learned:
+        break;
+    }
+    return "learned";
+}
+
+model::CorrectionRuleSource sourceFrom(const char* s) noexcept {
+    using model::CorrectionRuleSource;
+    if (s == nullptr) return CorrectionRuleSource::Learned;
+    const std::string_view v(s);
+    if (v == "user") return CorrectionRuleSource::User;
+    if (v == "builtin") return CorrectionRuleSource::Builtin;
+    return CorrectionRuleSource::Learned;
 }
 
 } // namespace
@@ -172,7 +183,7 @@ lk::expected<std::vector<LexiconEntry>> SqliteLexiconStore::loadAll() {
         if (rc == SQLITE_DONE) break;
         if (rc != SQLITE_ROW) return lk::unexpected(lastError("loadAll step"));
         LexiconEntry e;
-        e.phrase = phraseFromJoined(
+        e.phrase = Phrase::fromJoined(
             text::fromUtf8(reinterpret_cast<const char*>(sqlite3_column_text(st.get(), 0))));
         e.frequency = static_cast<std::uint32_t>(sqlite3_column_int64(st.get(), 1));
         e.firstSeenAt = sqlite3_column_int64(st.get(), 2);
@@ -188,9 +199,9 @@ lk::expected<void> SqliteLexiconStore::applyDeltas(const LexiconDeltaBatch& batc
     if (batch.empty()) return {};
     // PLAN 5.5: UPSERT, frequency accumulates, last_used_at moves forward only.
     Statement st(db_, "INSERT INTO user_lexicon (phrase, syllable_count, frequency, "
-                      "first_seen_at, last_used_at) VALUES (?, ?, ?, ?, ?) "
+                      "first_seen_at, last_used_at) VALUES (?, ?, MAX(0, ?), ?, ?) "
                       "ON CONFLICT(phrase) DO UPDATE SET "
-                      "frequency = MAX(0, frequency + excluded.frequency), "
+                      "frequency = MAX(0, frequency + ?), "
                       "last_used_at = MAX(last_used_at, excluded.last_used_at)");
     if (!st.ok()) return lk::unexpected(lastError("applyDeltas prepare"));
 
@@ -201,6 +212,7 @@ lk::expected<void> SqliteLexiconStore::applyDeltas(const LexiconDeltaBatch& batc
         sqlite3_bind_int(st.get(), 3, d.frequencyDelta);
         sqlite3_bind_int64(st.get(), 4, d.usedAt);
         sqlite3_bind_int64(st.get(), 5, d.usedAt);
+        sqlite3_bind_int(st.get(), 6, d.frequencyDelta);
         if (st.step() != SQLITE_DONE) {
             const Error e = lastError("applyDeltas step");
             (void)exec("ROLLBACK");
@@ -257,6 +269,142 @@ lk::expected<int> SqliteLexiconStore::cleanup(std::int64_t nowUnixSeconds) {
     const int removed = sqlite3_total_changes(db_) - before;
     if (removed > 0) (void)exec("VACUUM");
     return removed;
+}
+
+lk::expected<std::vector<model::CorrectionRule>> SqliteLexiconStore::loadCorrections() {
+    Statement st(db_, "SELECT wrong_phrase, correct_phrase, confidence, times_applied, "
+                      "times_rejected, source, updated_at FROM correction_map");
+    if (!st.ok()) return lk::unexpected(lastError("loadCorrections"));
+    std::vector<model::CorrectionRule> out;
+    for (;;) {
+        const int rc = st.step();
+        if (rc == SQLITE_DONE) break;
+        if (rc != SQLITE_ROW) return lk::unexpected(lastError("loadCorrections step"));
+        model::CorrectionRule r;
+        r.wrong = columnU32(st.get(), 0);
+        r.correct = columnU32(st.get(), 1);
+        r.confidence = sqlite3_column_double(st.get(), 2);
+        r.timesApplied = sqlite3_column_int(st.get(), 3);
+        r.timesRejected = sqlite3_column_int(st.get(), 4);
+        r.source = sourceFrom(reinterpret_cast<const char*>(sqlite3_column_text(st.get(), 5)));
+        r.updatedAt = sqlite3_column_int64(st.get(), 6);
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+lk::expected<std::vector<std::u32string>> SqliteLexiconStore::loadBlacklist() {
+    Statement st(db_, "SELECT phrase FROM autocorrect_blacklist");
+    if (!st.ok()) return lk::unexpected(lastError("loadBlacklist"));
+    std::vector<std::u32string> out;
+    for (;;) {
+        const int rc = st.step();
+        if (rc == SQLITE_DONE) break;
+        if (rc != SQLITE_ROW) return lk::unexpected(lastError("loadBlacklist step"));
+        out.push_back(columnU32(st.get(), 0));
+    }
+    return out;
+}
+
+lk::expected<void> SqliteLexiconStore::reinforceCorrection(std::u32string_view wrong,
+                                                           std::u32string_view correct,
+                                                           double delta,
+                                                           model::CorrectionRuleSource source,
+                                                           std::int64_t nowUnixSeconds) {
+    // Same target: accumulate. A new target for the same mistake means the old rule was
+    // wrong for this user: start over with the new one.
+    Statement st(db_, "INSERT INTO correction_map (wrong_phrase, correct_phrase, confidence, "
+                      "source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) "
+                      "ON CONFLICT(wrong_phrase) DO UPDATE SET "
+                      "confidence = CASE WHEN correct_phrase = excluded.correct_phrase "
+                      "  THEN MIN(1.0, confidence + excluded.confidence) "
+                      "  ELSE excluded.confidence END, "
+                      "times_rejected = CASE WHEN correct_phrase = excluded.correct_phrase "
+                      "  THEN times_rejected ELSE 0 END, "
+                      "correct_phrase = excluded.correct_phrase, "
+                      "source = excluded.source, updated_at = excluded.updated_at");
+    if (!st.ok()) return lk::unexpected(lastError("reinforceCorrection prepare"));
+    bindText(st.get(), 1, text::toUtf8(wrong));
+    bindText(st.get(), 2, text::toUtf8(correct));
+    sqlite3_bind_double(st.get(), 3, delta);
+    sqlite3_bind_text(st.get(), 4, sourceName(source), -1, SQLITE_STATIC);
+    sqlite3_bind_int64(st.get(), 5, nowUnixSeconds);
+    sqlite3_bind_int64(st.get(), 6, nowUnixSeconds);
+    if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("reinforceCorrection step"));
+    return {};
+}
+
+lk::expected<bool> SqliteLexiconStore::rejectCorrection(std::u32string_view wrong, double penalty,
+                                                        std::int64_t nowUnixSeconds) {
+    const std::string key = text::toUtf8(wrong);
+    if (auto r = exec("BEGIN IMMEDIATE"); !r) return lk::unexpected(r.error());
+    const auto fail = [&](const char* what) {
+        const Error e = lastError(what);
+        (void)exec("ROLLBACK");
+        return lk::unexpected(e);
+    };
+    // A dictionary correction has no rule yet: record the rejection as a zero-confidence
+    // rule so the count survives and the second Undo blacklists it like any other.
+    {
+        Statement st(db_, "INSERT INTO correction_map (wrong_phrase, correct_phrase, confidence, "
+                          "source, created_at, updated_at) "
+                          "VALUES (?, '', 0.0, 'learned', ?, ?) "
+                          "ON CONFLICT(wrong_phrase) DO NOTHING");
+        if (!st.ok()) return fail("rejectCorrection insert");
+        bindText(st.get(), 1, key);
+        sqlite3_bind_int64(st.get(), 2, nowUnixSeconds);
+        sqlite3_bind_int64(st.get(), 3, nowUnixSeconds);
+        if (st.step() != SQLITE_DONE) return fail("rejectCorrection insert step");
+    }
+    {
+        Statement st(db_, "UPDATE correction_map SET confidence = MAX(0.0, confidence - ?), "
+                          "times_rejected = times_rejected + 1, updated_at = ? "
+                          "WHERE wrong_phrase = ?");
+        if (!st.ok()) return fail("rejectCorrection update");
+        sqlite3_bind_double(st.get(), 1, penalty);
+        sqlite3_bind_int64(st.get(), 2, nowUnixSeconds);
+        bindText(st.get(), 3, key);
+        if (st.step() != SQLITE_DONE) return fail("rejectCorrection update step");
+    }
+    int rejected = 0;
+    {
+        Statement st(db_, "SELECT times_rejected FROM correction_map WHERE wrong_phrase = ?");
+        if (!st.ok()) return fail("rejectCorrection read");
+        bindText(st.get(), 1, key);
+        if (st.step() == SQLITE_ROW) rejected = sqlite3_column_int(st.get(), 0);
+    }
+    bool blacklisted = false;
+    if (rejected >= Thresholds::kRejectionsBeforeBlacklist) {
+        Statement st(db_, "INSERT OR IGNORE INTO autocorrect_blacklist (phrase, reason, "
+                          "created_at) VALUES (?, 'user_undo', ?)");
+        if (!st.ok()) return fail("rejectCorrection blacklist");
+        bindText(st.get(), 1, key);
+        sqlite3_bind_int64(st.get(), 2, nowUnixSeconds);
+        if (st.step() != SQLITE_DONE) return fail("rejectCorrection blacklist step");
+        blacklisted = true;
+    }
+    if (auto r = exec("COMMIT"); !r) return lk::unexpected(r.error());
+    return blacklisted;
+}
+
+lk::expected<void> SqliteLexiconStore::noteCorrectionApplied(std::u32string_view wrong) {
+    Statement st(db_, "UPDATE correction_map SET times_applied = times_applied + 1 "
+                      "WHERE wrong_phrase = ?");
+    if (!st.ok()) return lk::unexpected(lastError("noteCorrectionApplied"));
+    bindText(st.get(), 1, text::toUtf8(wrong));
+    if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("noteCorrectionApplied step"));
+    return {};
+}
+
+lk::expected<void> SqliteLexiconStore::blacklist(std::u32string_view phrase,
+                                                 std::int64_t nowUnixSeconds) {
+    Statement st(db_, "INSERT OR IGNORE INTO autocorrect_blacklist (phrase, reason, created_at) "
+                      "VALUES (?, 'user_manual', ?)");
+    if (!st.ok()) return lk::unexpected(lastError("blacklist"));
+    bindText(st.get(), 1, text::toUtf8(phrase));
+    sqlite3_bind_int64(st.get(), 2, nowUnixSeconds);
+    if (st.step() != SQLITE_DONE) return lk::unexpected(lastError("blacklist step"));
+    return {};
 }
 
 } // namespace lankey::core::storage

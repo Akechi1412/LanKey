@@ -123,4 +123,47 @@ bool hasDiacritic(char32_t c) noexcept {
     return e != nullptr && e->base != c;
 }
 
+bool hasTone(char32_t c) noexcept {
+    const auto* e = findLetter(c);
+    if (e == nullptr || e->base == c) return false;
+    // A diacritic that is only a modifier is not a tone.
+    switch (e->lower) {
+    case U'ă':
+    case U'â':
+    case U'ê':
+    case U'ô':
+    case U'ơ':
+    case U'ư':
+    case U'đ':
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool hasTone(std::u32string_view s) noexcept {
+    return std::ranges::any_of(s, [](char32_t c) { return hasTone(c); });
+}
+
+std::u32string applyCasing(std::u32string_view typed, std::u32string_view folded) {
+    std::u32string out(folded);
+    if (typed.empty()) return out;
+
+    const bool firstUpper = toLower(typed[0]) != typed[0];
+    bool allUpper = typed.size() > 1;
+    for (const char32_t c : typed) {
+        if (isLetter(c) && toLower(c) == c) {
+            allUpper = false;
+            break;
+        }
+    }
+    if (allUpper) {
+        for (auto& c : out)
+            c = toUpper(c);
+    } else if (firstUpper && !out.empty()) {
+        out[0] = toUpper(out[0]);
+    }
+    return out;
+}
+
 } // namespace lankey::core::text

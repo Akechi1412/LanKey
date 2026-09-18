@@ -125,11 +125,13 @@ TEST_F(PipelineTest, PointerClickResetsWindow) {
     EXPECT_TRUE(rig.pipeline().window().empty());
 }
 
-TEST_F(PipelineTest, BackspaceIntoCommittedTextResetsWindow) {
+TEST_F(PipelineTest, BackspaceIntoCommittedTextReopensTheWord) {
     rig.type("xin ");
     EXPECT_EQ(rig.pipeline().window().committedCount(), 1u);
     rig.type("\b"); // nothing being composed -> deleting the space
-    EXPECT_TRUE(rig.pipeline().window().empty());
+    // The syllable is no longer committed; it is back under the user's fingers.
+    EXPECT_EQ(rig.pipeline().window().committedCount(), 0u);
+    EXPECT_EQ(rig.pipeline().window().current, U"xin");
 }
 
 TEST_F(PipelineTest, BackspaceWithinSyllableKeepsWindow) {

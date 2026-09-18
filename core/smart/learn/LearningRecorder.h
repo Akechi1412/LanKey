@@ -32,6 +32,8 @@ public:
 
     // A picked suggestion is a stronger signal than a typed phrase.
     void recordSelection(const model::Phrase& phrase);
+    // Direct adjustment (Undo of a correction: +1 what the user typed, -1 what we put).
+    void adjust(const model::Phrase& phrase, std::int32_t delta);
 
     // Call periodically (e.g. on every worker loop iteration): flushes when due.
     void flushIfDue();
@@ -41,9 +43,12 @@ public:
 
     static constexpr std::int32_t kSelectionWeight = 2;
 
+    // A phrase with a one-letter or absurdly long syllable is noise, never worth learning
+    // (nor worth a correction rule: ManualCorrectionDetector applies the same test).
+    [[nodiscard]] static bool learnable(const model::Phrase& phrase) noexcept;
+
 private:
     void add(const model::Phrase& phrase, std::int32_t delta);
-    [[nodiscard]] static bool learnable(const model::Phrase& phrase) noexcept;
 
     IClock& clock_;
     FlushHandler onFlush_;

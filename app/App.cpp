@@ -23,6 +23,7 @@ constexpr UINT kMsgPopupPending = WM_APP + 23; // lParam = generation (no payloa
 constexpr UINT kMsgLanguage = WM_APP + 21;     // wParam = enabled
 constexpr UINT kMsgEraseDone = WM_APP + 22;    // wParam = success
 constexpr UINT_PTR kIdleTimer = 1;
+constexpr UINT_PTR kNoticeTimer = 2;
 
 std::filesystem::path appDataDir() {
     PWSTR path = nullptr;
@@ -98,14 +99,27 @@ bool App::initialise(HINSTANCE instance) {
     }
 
     suggestions_.setSettings(settings_.suggestions);
+    corrector_.setSettings(settings_.autoCorrect);
     worker_ = std::make_unique<core::smart::SmartWorker>(
-        core::smart::SmartWorker::Dependencies{*store_, suggestions_, clock_}, settings_);
+        core::smart::SmartWorker::Dependencies{*store_, suggestions_, corrector_, clock_},
+        settings_);
+    // Worker thread -> hook thread: the pipeline alone may touch the screen, and it
+    // checks the generation before doing so.
+    worker_->setCorrectionHandler([this](core::model::Correction c) {
+        hook_.post([this, c = std::move(c)] { pipeline_->applyCorrection(c); });
+    });
 
     InputPipeline::Handlers handlers;
     handlers.onCommit = [this](core::model::SyllableCommitted&& c) {
         worker_->onCommit(std::move(c));
     };
     handlers.onSelection = [this](const core::model::Phrase& p) { worker_->onSelection(p); };
+    handlers.onCorrectionApplied = [this](const std::u32string& w) {
+        worker_->onCorrectionApplied(w);
+    };
+    handlers.onCorrectionRejected = [this](const std::u32string& w, const std::u32string& c) {
+        worker_->onCorrectionRejected(w, c);
+    };
     handlers.onPopup = [this](const PopupState& state) {
         // Hook thread -> UI thread. A pending list only needs to start the idle timer, so
         // it travels as a bare generation (no allocation on the hook thread per key); the
@@ -128,6 +142,7 @@ bool App::initialise(HINSTANCE instance) {
     tray.onToggleVietnamese = [this] { applyVietnameseEnabled(!pipeline_->vietnameseEnabled()); };
     tray.onInputMethod = [this](InputMethod m) { setInputMethod(m); };
     tray.onSuggestionsEnabled = [this](bool on) { setSuggestionsEnabled(on); };
+    tray.onAutoCorrectEnabled = [this](bool on) { setAutoCorrectEnabled(on); };
     tray.onEraseAllData = [this] { confirmEraseAllData(); };
     tray.onQuit = [] { PostQuitMessage(0); };
     if (!tray_.create(instance, std::move(tray))) {
@@ -181,25 +196,34 @@ void App::shutdown() {
     if (pipeline_) {
         const auto& p = pipeline_->stats();
         logf("pipeline stats: keys=%llu commits=%llu replacements=%llu dropped=%llu "
-             "exceptions=%llu suggestionsShown=%llu selected=%llu",
+             "exceptions=%llu suggestionsShown=%llu selected=%llu corrections=%llu "
+             "undone=%llu correctionsDropped=%llu retypes=%llu",
              static_cast<unsigned long long>(p.keys), static_cast<unsigned long long>(p.commits),
              static_cast<unsigned long long>(p.replacementsApplied),
              static_cast<unsigned long long>(p.replacementsDroppedByGeneration),
              static_cast<unsigned long long>(p.exceptionsSwallowed),
              static_cast<unsigned long long>(p.suggestionsShown),
-             static_cast<unsigned long long>(p.suggestionsSelected));
+             static_cast<unsigned long long>(p.suggestionsSelected),
+             static_cast<unsigned long long>(p.correctionsApplied),
+             static_cast<unsigned long long>(p.correctionsUndone),
+             static_cast<unsigned long long>(p.correctionsDropped),
+             static_cast<unsigned long long>(p.retypesDetected));
     }
     if (worker_) {
         const auto& w = worker_->stats();
         logf("worker stats: queued=%llu dropped=%llu processed=%llu privacyRejected=%llu "
-             "flushes=%llu rebuilds=%llu storeErrors=%llu",
+             "flushes=%llu rebuilds=%llu storeErrors=%llu correctionsProposed=%llu "
+             "manualFixes=%llu rejected=%llu",
              static_cast<unsigned long long>(w.eventsQueued.load()),
              static_cast<unsigned long long>(w.eventsDropped.load()),
              static_cast<unsigned long long>(w.eventsProcessed.load()),
              static_cast<unsigned long long>(w.rejectedByPrivacy.load()),
              static_cast<unsigned long long>(w.flushes.load()),
              static_cast<unsigned long long>(w.rebuilds.load()),
-             static_cast<unsigned long long>(w.storeErrors.load()));
+             static_cast<unsigned long long>(w.storeErrors.load()),
+             static_cast<unsigned long long>(w.correctionsProposed.load()),
+             static_cast<unsigned long long>(w.manualFixesLearned.load()),
+             static_cast<unsigned long long>(w.correctionsRejected.load()));
     }
     hook_.stop();
     focus_.uninstall();
@@ -259,6 +283,10 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         return 0;
     case WM_TIMER:
         if (wParam == kIdleTimer) onIdleTimer();
+        if (wParam == kNoticeTimer) {
+            KillTimer(uiWindow_, kNoticeTimer);
+            popup_.hideNotice();
+        }
         return 0;
     case kMsgLanguage:
         settings_.vietnameseEnabled = wParam != 0;
@@ -282,6 +310,15 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
 }
 
 void App::showPopup(const PopupState& state) {
+    if (!state.notice.empty()) {
+        KillTimer(uiWindow_, kIdleTimer);
+        pendingGeneration_ = 0;
+        popup_.showNotice(state.notice, caret_.resolve());
+        SetTimer(uiWindow_, kNoticeTimer,
+                 static_cast<UINT>(core::model::Thresholds::kCorrectionNoticeMs), nullptr);
+        return;
+    }
+    KillTimer(uiWindow_, kNoticeTimer);
     if (state.items.empty()) {
         // Hide, and drop any idle timer still counting for an older pending list.
         KillTimer(uiWindow_, kIdleTimer);
@@ -336,6 +373,15 @@ void App::setSuggestionsEnabled(bool enabled) {
     saveSettings();
 }
 
+void App::setAutoCorrectEnabled(bool enabled) {
+    // Off <-> the safe default; the finer levels come with the settings UI (Phase 4).
+    settings_.autoCorrect.level =
+        enabled ? core::model::AutoCorrectLevel::Cautious : core::model::AutoCorrectLevel::Off;
+    worker_->updateSettings(settings_);
+    refreshTray();
+    saveSettings();
+}
+
 void App::confirmEraseAllData() {
     const int answer =
         MessageBoxW(nullptr,
@@ -358,7 +404,8 @@ void App::saveSettings() {
 
 void App::refreshTray() {
     tray_.setState(settings_.vietnameseEnabled, settings_.engine.inputMethod,
-                   settings_.suggestions.enabled);
+                   settings_.suggestions.enabled,
+                   settings_.autoCorrect.level != core::model::AutoCorrectLevel::Off);
 }
 
 } // namespace lankey::app

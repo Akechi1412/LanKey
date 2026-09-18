@@ -6,7 +6,8 @@ namespace lankey::core::model {
 
 Syllable Syllable::fromComposed(std::u32string_view composed) {
     Syllable s;
-    s.text = text::caseFold(text::nfc(composed));
+    s.typed = text::nfc(composed);
+    s.text = text::caseFold(s.typed);
     return s;
 }
 
@@ -17,6 +18,21 @@ std::u32string Phrase::joined() const {
         out += s.text;
     }
     return out;
+}
+
+Phrase Phrase::fromJoined(std::u32string_view joined) {
+    Phrase p;
+    std::u32string cur;
+    for (const char32_t c : joined) {
+        if (c == U' ') {
+            if (!cur.empty()) p.syllables.push_back(Syllable{cur, {}});
+            cur.clear();
+        } else {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) p.syllables.push_back(Syllable{cur, {}});
+    return p;
 }
 
 void PhraseWindow::commit(Syllable syllable) {

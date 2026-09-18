@@ -79,6 +79,7 @@ void SuggestionPopup::show(const core::model::SuggestionList& items, int selecte
             {toWide(std::u32string_view(joined).substr(0, contextLen)), toWide(s.insert)});
     }
     selected_ = std::clamp(selected, 0, static_cast<int>(rows_.size()) - 1);
+    notice_ = false;
     layout(caret);
     if (!visible_) {
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
@@ -87,9 +88,29 @@ void SuggestionPopup::show(const core::model::SuggestionList& items, int selecte
     InvalidateRect(hwnd_, nullptr, TRUE);
 }
 
+void SuggestionPopup::showNotice(const std::u32string& text,
+                                 const std::optional<core::model::ScreenRect>& caret) {
+    if (hwnd_ == nullptr) return;
+    rows_.clear();
+    rows_.push_back({toWide(text), toWide(U"   \u232b ho\u00e0n t\u00e1c")});
+    selected_ = -1;
+    notice_ = true;
+    layout(caret);
+    if (!visible_) {
+        ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        visible_ = true;
+    }
+    InvalidateRect(hwnd_, nullptr, TRUE);
+}
+
+void SuggestionPopup::hideNotice() {
+    if (notice_) hide();
+}
+
 void SuggestionPopup::hide() {
     if (hwnd_ != nullptr && visible_) ShowWindow(hwnd_, SW_HIDE);
     visible_ = false;
+    notice_ = false;
 }
 
 void SuggestionPopup::layout(const std::optional<core::model::ScreenRect>& caret) {
@@ -212,6 +233,18 @@ void SuggestionPopup::paint() {
         text.left += pad;
         text.right -= pad;
         const auto& r = rows_[i];
+        if (notice_) {
+            SetTextColor(dc, kPopupPalette.text);
+            DrawTextW(dc, r.context.c_str(), static_cast<int>(r.context.size()), &text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+            SIZE size{};
+            GetTextExtentPoint32W(dc, r.context.c_str(), static_cast<int>(r.context.size()), &size);
+            text.left += size.cx;
+            SetTextColor(dc, kPopupPalette.textDim);
+            DrawTextW(dc, r.insert.c_str(), static_cast<int>(r.insert.size()), &text,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+            continue;
+        }
         if (!r.context.empty()) {
             SetTextColor(dc, kPopupPalette.textDim);
             DrawTextW(dc, r.context.c_str(), static_cast<int>(r.context.size()), &text,

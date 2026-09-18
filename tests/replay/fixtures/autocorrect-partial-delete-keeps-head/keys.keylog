@@ -1,0 +1,9 @@
+# Dogfood 2026-09-18: "sủa" typed, space, then Backspace x3 leaves "s" and "uwar" is typed.
+# The engine only composes "ửa"; the commit must still be "sửa" (a real word), or
+# AutoCorrect would "fix" the fragment "ửa" into "ủa" and the screen would read "sủa".
+{"autocorrect":"cautious"}
+{"text":"suar "}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"text":"uwar "}

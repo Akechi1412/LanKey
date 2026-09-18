@@ -49,6 +49,5 @@ private:
 
 // Re-apply the user's capitalisation pattern from what they typed to what we insert:
 // "Chư" -> "Chương trình", "CHƯ" -> "CHƯƠNG TRÌNH", "chư" -> "chương trình".
-[[nodiscard]] std::u32string applyCasing(std::u32string_view typed, std::u32string_view folded);
 
 } // namespace lankey::core::smart

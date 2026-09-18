@@ -96,7 +96,10 @@ std::string JsonSettingsStore::serialize(const Settings& s) {
         {"weightPhraseLength", s.suggestions.weightPhraseLength},
         {"recencyLambda", s.suggestions.recencyLambda},
     };
-    j["autoCorrect"] = {{"level", levelName(s.autoCorrect.level)}};
+    j["autoCorrect"] = {
+        {"level", levelName(s.autoCorrect.level)},
+        {"excludedApps", s.autoCorrect.excludedApps},
+    };
     j["privacy"] = {
         {"excludedApps", s.privacy.excludedApps},
         {"suggestionsDisabledApps", s.privacy.suggestionsDisabledApps},
@@ -147,6 +150,7 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
         std::string level;
         get(*a, "level", level);
         s.autoCorrect.level = levelFrom(level, s.autoCorrect.level);
+        get(*a, "excludedApps", s.autoCorrect.excludedApps);
     }
     if (const auto p = j.find("privacy"); p != j.end() && p->is_object()) {
         get(*p, "excludedApps", s.privacy.excludedApps);

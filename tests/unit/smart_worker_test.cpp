@@ -1,4 +1,5 @@
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -84,9 +85,10 @@ TEST(TaskThread, RunsTasksInOrderAndDrains) {
 struct WorkerTest : testing::Test {
     InMemoryLexiconStore store;
     smart::SuggestionEngine suggestions;
+    smart::AutoCorrectEngine corrector;
     FakeClock clock;
     Settings settings;
-    smart::SmartWorker worker{{store, suggestions, clock}, settings};
+    smart::SmartWorker worker{{store, suggestions, corrector, clock}, settings};
 
     static SyllableCommitted event(std::initializer_list<const char32_t*> syllables,
                                    std::string app = "notepad.exe") {
@@ -113,7 +115,8 @@ TEST_F(WorkerTest, LearnsCommitsFlushesOnStopAndRebuildsSnapshot) {
 
     // A fresh worker over the same store makes the phrase suggestable after its first load.
     smart::SuggestionEngine engine2;
-    smart::SmartWorker w2({store, engine2, clock}, settings);
+    smart::AutoCorrectEngine corrector2;
+    smart::SmartWorker w2({store, engine2, corrector2, clock}, settings);
     w2.start();
     w2.drainForTests();
     EXPECT_TRUE(engine2.hasSnapshot());
@@ -177,6 +180,64 @@ TEST_F(WorkerTest, SettingsUpdateRebuildsPrivacyFilter) {
     worker.stop();
     EXPECT_EQ(worker.stats().rejectedByPrivacy.load(), 1u);
     EXPECT_EQ(store.size(), 1u);
+}
+
+TEST_F(WorkerTest, ProposesCorrectionsAndLearnsTheCorrectedPhrase) {
+    // The user writes "đường" a lot; "đưởng" (wrong tone key) gets corrected.
+    ASSERT_TRUE(store.applyDeltas({{{{Syllable::fromComposed(U"đường")}}, 5, 1}}).has_value());
+    std::vector<model::Correction> proposed;
+    std::mutex m;
+    worker.setCorrectionHandler([&](model::Correction c) {
+        const std::lock_guard<std::mutex> lock(m);
+        proposed.push_back(std::move(c));
+    });
+    worker.start();
+    worker.drainForTests(); // base index + first snapshot are ready
+
+    auto e = event({U"đưởng"});
+    e.terminator = U' ';
+    e.vietnameseTransformApplied = true;
+    e.generation = 7;
+    worker.onCommit(std::move(e));
+    worker.drainForTests();
+    {
+        const std::lock_guard<std::mutex> lock(m);
+        ASSERT_EQ(proposed.size(), 1u);
+        EXPECT_EQ(proposed[0].corrected[0].text, U"đường");
+        EXPECT_EQ(proposed[0].expectedGeneration, 7u);
+    }
+    worker.stop();
+    // What was learned is the corrected word, not the typo.
+    EXPECT_EQ(store.find(U"đường")->frequency, 6u);
+    EXPECT_EQ(store.find(U"đưởng"), nullptr);
+    EXPECT_EQ(worker.stats().correctionsProposed.load(), 1u);
+}
+
+TEST_F(WorkerTest, ManualFixesAndRejectionsReachTheStore) {
+    worker.start();
+    worker.drainForTests();
+
+    auto e = event({U"sửa", U"lỗi"});
+    e.retypedFrom = {Syllable::fromComposed(U"sữa"), Syllable::fromComposed(U"lỗi")};
+    worker.onCommit(std::move(e));
+    worker.drainForTests();
+    const auto* rule = store.rule(U"sữa lỗi");
+    ASSERT_NE(rule, nullptr);
+    EXPECT_EQ(rule->correct, U"sửa lỗi");
+    EXPECT_NEAR(rule->confidence, model::Thresholds::kCorrectionLearnStep, 1e-9);
+    EXPECT_EQ(worker.stats().manualFixesLearned.load(), 1u);
+
+    worker.onCorrectionRejected(U"sữa lỗi", U"sửa lỗi");
+    worker.onCorrectionRejected(U"sữa lỗi", U"sửa lỗi");
+    worker.drainForTests();
+    worker.stop();
+    EXPECT_EQ(store.rule(U"sữa lỗi")->timesRejected, 2);
+    EXPECT_EQ(store.loadBlacklist()->size(), 1u);
+    EXPECT_EQ(worker.stats().correctionsRejected.load(), 2u);
+    // What the user typed was learned back; what we put in was taken back (never below 0).
+    ASSERT_NE(store.find(U"sữa lỗi"), nullptr);
+    EXPECT_EQ(store.find(U"sữa lỗi")->frequency, 2u);
+    EXPECT_EQ(store.find(U"sửa lỗi")->frequency, 0u);
 }
 
 } // namespace

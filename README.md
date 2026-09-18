@@ -4,9 +4,9 @@ Bộ gõ tiếng Việt mã nguồn mở cho Windows, hoạt động trên toàn
 người dùng** để gợi ý từ/cụm từ và tự sửa lỗi chính tả cá nhân hoá. Dữ liệu học nằm 100% trên
 máy người dùng, không có đồng bộ cloud.
 
-> **Trạng thái:** v0.1-alpha đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
-> SQLite, gợi ý/dự đoán có popup, tray icon, Ctrl+Shift bật/tắt. Chưa có: tự sửa lỗi cá nhân
-> hoá (F2), cửa sổ Settings, mã hoá DB.
+> **Trạng thái:** v0.1 (MVP) đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
+> SQLite, gợi ý/dự đoán có popup, tự sửa lỗi cá nhân hoá (F2, mặc định mức Thận trọng, Undo bằng
+> Backspace/Ctrl+Z), tray icon, Ctrl+Shift bật/tắt. Chưa có: cửa sổ Settings, mã hoá DB.
 
 ## Ý tưởng
 
@@ -16,8 +16,17 @@ LanKey giữ nguyên phần đó (lấy engine từ upstream, không viết lạ
 - **Gợi ý theo lịch sử cá nhân** — ghi nhớ các cụm 1–5 âm tiết hay gõ ("chương trình", "hệ điều
   hành windows"); sau khi gõ space thì **dự đoán từ tiếp theo**, đang gõ dở thì hoàn thành cụm.
   Popup chỉ hiện khi bạn **ngừng gõ ~350 ms** (không nháy); Tab/Enter chọn, ↑↓ đổi, Esc tắt.
-- **Tự sửa lỗi cá nhân hoá** — phát hiện âm tiết/cụm gõ sai so với từ điển chuẩn hoặc so với chính
-  thói quen tự sửa của người dùng ("sữa lỗi" → "sửa lỗi"), có Undo bằng Backspace.
+- **Tự sửa lỗi cá nhân hoá** — sau khi một âm tiết kết thúc, đối chiếu với từ điển âm tiết chuẩn
+  (~6,7k, nhúng trong exe) qua chỉ mục SymSpell trên "khung" âm tiết với khoảng cách có trọng số
+  dấu (tra cứu ~4–45 µs), **chỉ sửa khi có đúng một ứng viên tốt nhất**; ứng viên được xếp hạng
+  theo khoảng cách, có/không dấu thanh khớp với lỗi, và tần suất chính bạn gõ. Đo trên toàn từ
+  điển (`tests/bench/autocorrect_eval_test.cpp`): các lớp lỗi đoán được nguồn (nhầm phím dấu,
+  mũ/móc, phím nảy) sửa sai 0.00–0.09 %, sửa đúng 36–77 % khi chưa có lịch sử, ~100 % khi có. Học thêm từ
+  thói quen tự sửa của bạn (xoá rồi gõ lại ≥ 4 lần: "sữa lỗi" → "sửa lỗi") vào `correction_map`.
+  Mỗi lần sửa hiện "gốc → đã sửa · ⌫ hoàn tác" cạnh con trỏ ~2 s; Backspace/Ctrl+Z ngay sau đó
+  hoàn tác — từ gốc được học lại và phỏng đoán đó tạm ngưng 7 ngày, hoàn tác lần nữa thì vào
+  blacklist. Không sửa tiếng Anh xen kẽ (âm tiết engine không biến đổi), sau Enter/Tab, trong ô
+  mật khẩu; `autoCorrect.excludedApps` (mặc định trống) để tự loại trừ app nếu muốn.
 
 Đơn vị học là **cụm 1–5 âm tiết**, không phải âm tiết đơn — nếu không thì "chương trình" không
 bao giờ được học và "sữa lỗi" không bao giờ được sửa.
@@ -31,9 +40,9 @@ Phím thô → [platform/win32: hook] → [core: engine adapter → smart layer]
 
 | Thư mục | Vai trò | Trạng thái |
 |---|---|---|
-| `core/` | model, interface, engine adapter, pipeline, smart layer (privacy/learn/suggest), storage (SQLite, JSON), threading. **Không include Win32.** | có; `smart/correct/` (F2) chưa |
+| `core/` | model, interface, engine adapter, pipeline, smart layer (privacy/learn/suggest/correct), storage (SQLite, JSON), threading. **Không include Win32.** | có |
 | `third_party/` | engine upstream vendored, mỗi thư mục có `UPSTREAM.md` + `LICENSE` + `patches/` | `engine-openkey/` |
-| `tests/` | `unit/` (một file test cho mỗi class), `fakes/` (một fake cho mỗi interface), `replay/` (harness + `fixtures/`), `support/` | 86 test |
+| `tests/` | `unit/` (một file test cho mỗi class), `fakes/` (một fake cho mỗi interface), `replay/` (harness + `fixtures/`), `support/` | 257 test |
 | `tools/` | script sinh dữ liệu (`build-dictionary`) | có |
 | `data/` | từ điển âm tiết chuẩn (read-only, sinh từ `tools/`) | 6.683 âm tiết |
 | `platform/win32/` | `KeyboardHook` (thread riêng + watchdog), `InputSender`, `FocusWatcher` (UIA IsPassword), `CaretResolver` (UIA caret) | có |

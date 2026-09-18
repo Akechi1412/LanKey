@@ -21,6 +21,16 @@ struct Thresholds {
     static constexpr double kCorrectionApplyConfidence = 0.7;
     static constexpr int kUndoWindowMs = 3000;
     static constexpr int kRejectionsBeforeBlacklist = 2;
+    static constexpr double kCorrectionLearnStep = 0.2;           // per manual fix observed
+    static constexpr double kCorrectionRejectPenalty = 0.3;       // per Undo
+    static constexpr int kFuzzySearchRadiusScaled = 10;           // 2.0 in VietnameseDistance units
+    static constexpr int kRetypeWindowMs = 3000;                  // manual fix must start within
+    static constexpr int kManualCorrectionMaxDistanceScaled = 10; // P1 vs P2 <= 2.0
+    // After the user undoes a dictionary guess once, the same guess is not tried again
+    // for this long; a second Undo (after the cooldown) blacklists it for good.
+    static constexpr std::int64_t kRejectionCooldownSeconds = 7LL * 86400;
+    static constexpr int kRecentCorrections = 10;    // ring buffer for Undo/Settings
+    static constexpr int kCorrectionNoticeMs = 2000; // "đưởng -> đường" shown this long
 
     // Phrase / syllable shape
     static constexpr int kMaxPhraseSyllables = 5;

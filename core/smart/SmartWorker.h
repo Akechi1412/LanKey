@@ -11,10 +11,12 @@
 #include "core/interfaces/IClock.h"
 #include "core/interfaces/ILexiconStore.h"
 #include "core/model/AtomicSnapshot.h"
+#include "core/model/Correction.h"
 #include "core/model/Phrase.h"
 #include "core/model/Settings.h"
 #include "core/model/SyllableCommitted.h"
 #include "core/model/Thresholds.h"
+#include "core/smart/correct/AutoCorrectEngine.h"
 #include "core/smart/learn/LearningRecorder.h"
 #include "core/smart/privacy/PrivacyFilter.h"
 #include "core/smart/suggest/SuggestionEngine.h"
@@ -25,11 +27,13 @@ namespace lankey::core::smart {
 
 // Owns the worker thread and the DB thread (PLAN 7.2) and wires the Smart Layer together:
 //
-//   hook thread  --SyllableCommitted / selected Phrase-->  [SPSC queue]
-//   worker       PrivacyFilter -> LearningRecorder -> (flush) -> DB thread: applyDeltas
+//   hook thread  --SyllableCommitted / selected Phrase / undo-->  [SPSC queue]
+//   worker       PrivacyFilter -> AutoCorrectEngine::check -> onCorrection (back to hook)
+//                             -> LearningRecorder (the corrected phrase, if any)
+//                             -> ManualCorrectionDetector -> DB: correction_map
 //                every kSnapshotRebuildIntervalMs, if anything changed:
-//                DB thread: loadAll -> SuggestionEngine::buildSnapshot -> publish
-//   DB thread    also: initial load, eraseAll, cleanup
+//                DB thread: loadAll (+corrections, blacklist) -> snapshots -> publish
+//   DB thread    also: initial load, base fuzzy index, eraseAll, cleanup
 //
 // Threading: onCommit()/onSelection() are hook-thread safe (lock-free push + semaphore
 // release). Everything else may be called from the UI/main thread.
@@ -38,8 +42,12 @@ public:
     struct Dependencies {
         ILexiconStore& store;
         SuggestionEngine& suggestions;
+        AutoCorrectEngine& corrector;
         IClock& clock;
     };
+
+    // Delivered on the worker thread; the receiver hands it to the hook thread.
+    using CorrectionHandler = std::function<void(model::Correction)>;
 
     struct Stats {
         std::atomic<std::uint64_t> eventsQueued{0};
@@ -49,6 +57,9 @@ public:
         std::atomic<std::uint64_t> flushes{0};
         std::atomic<std::uint64_t> rebuilds{0};
         std::atomic<std::uint64_t> storeErrors{0};
+        std::atomic<std::uint64_t> correctionsProposed{0};
+        std::atomic<std::uint64_t> manualFixesLearned{0};
+        std::atomic<std::uint64_t> correctionsRejected{0};
     };
 
     SmartWorker(Dependencies deps, const model::Settings& settings);
@@ -57,6 +68,9 @@ public:
     SmartWorker(const SmartWorker&) = delete;
     SmartWorker& operator=(const SmartWorker&) = delete;
 
+    // Before start(). Called on the worker thread whenever AutoCorrect proposes a change.
+    void setCorrectionHandler(CorrectionHandler handler) { onCorrection_ = std::move(handler); }
+
     void start();
     // Flushes pending learning to the store, then joins both threads.
     void stop();
@@ -64,6 +78,9 @@ public:
     // Hook thread.
     void onCommit(model::SyllableCommitted&& committed) noexcept;
     void onSelection(const model::Phrase& phrase) noexcept;
+    void onCorrectionApplied(const std::u32string& wrongKey) noexcept;
+    void onCorrectionRejected(const std::u32string& wrongKey,
+                              const std::u32string& correctKey) noexcept;
 
     // UI / main thread.
     void updateSettings(const model::Settings& settings);
@@ -77,16 +94,29 @@ public:
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
 
 private:
-    using Event = std::variant<model::SyllableCommitted, model::Phrase>;
+    struct CorrectionApplied {
+        std::u32string wrongKey;
+    };
+    struct CorrectionRejected {
+        std::u32string wrongKey;
+        std::u32string correctKey;
+    };
+    using Event = std::variant<model::SyllableCommitted, model::Phrase, CorrectionApplied,
+                               CorrectionRejected>;
+
+    template <class E>
+    void enqueue(E&& event) noexcept;
 
     void run();
     void handle(const Event& event);
+    void handleCommit(const model::SyllableCommitted& committed);
     void flushToStore(model::LexiconDeltaBatch batch);
     void rebuildSnapshot();
     // Age out stale rows on the DB thread; the next rebuild picks up the smaller table.
     void runCleanup();
 
     Dependencies deps_;
+    CorrectionHandler onCorrection_;
     model::AtomicSnapshot<model::Settings> settings_;
     std::atomic<bool> settingsChanged_{true};
 

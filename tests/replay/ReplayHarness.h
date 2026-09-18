@@ -7,6 +7,7 @@
 #include "core/interfaces/IVietnameseEngine.h"
 #include "core/model/Error.h"
 #include "core/model/KeyEvent.h"
+#include "core/model/Settings.h"
 #include "core/model/SyllableCommitted.h"
 
 namespace lankey::tests {
@@ -24,6 +25,14 @@ namespace lankey::tests {
 //                    {"focus":{"app":"x.exe","password":false}}
 //                    {"click":true}
 //                    {"wait":1500}                   advance the fake clock (ms)
+//                    {"autocorrect":"balanced","lag":0}
+//                                                    turn AutoCorrect on (off, cautious,
+//                                                    balanced, aggressive). `lag` = how many
+//                                                    later key events the "worker" needs
+//                                                    before its answer reaches the hook
+//                                                    thread (0 = before the next key).
+//                    {"lexicon":[["chương",12]]}     pre-learned single syllables with
+//                                                    frequency (AutoCorrect tie-breaks)
 //   expected.txt   final screen contents (a single trailing newline is ignored)
 //   commits.txt    optional; one line per committed syllable:
 //                    <window joined>|<terminator>|<transform 0/1>
@@ -37,11 +46,14 @@ class ReplayHarness {
 public:
     // Parses keys.keylog. Exposed for unit-testing the parser.
     struct Event {
-        enum class Kind { Key, Focus, Click, Wait } kind = Kind::Key;
+        enum class Kind { Key, Focus, Click, Wait, AutoCorrect, Lexicon } kind = Kind::Key;
         core::model::KeyEvent key;
         std::string app;
         bool password = false;
         int waitMs = 0;
+        core::model::AutoCorrectLevel level = core::model::AutoCorrectLevel::Off;
+        int lag = 0;
+        std::vector<std::pair<std::u32string, std::uint32_t>> lexicon;
     };
     [[nodiscard]] static lk::expected<std::vector<Event>> parse(const std::string& keylog);
 

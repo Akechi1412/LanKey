@@ -1,0 +1,5 @@
+# Telex "dduowngr" hits the wrong tone key: "đưởng". Both "đường" and "đương" are one
+# 0.4 slip away; the user who writes "đường" gets "đường" (Cautious: 0.4 is within 0.6).
+{"lexicon":[["đường",5]]}
+{"autocorrect":"cautious"}
+{"text":"dduowngr "}

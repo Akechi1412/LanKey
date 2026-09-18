@@ -9,6 +9,11 @@ add_executable(lankey_tests
     unit/engine_registry.cpp
     unit/typist_test.cpp
     unit/vietnamese_text_test.cpp
+    unit/vietnamese_distance_test.cpp
+    unit/base_syllable_set_test.cpp
+    unit/fuzzy_index_test.cpp
+    unit/autocorrect_engine_test.cpp
+    unit/manual_correction_detector_test.cpp
     unit/phrase_test.cpp
     unit/word_boundary_detector_test.cpp
     unit/input_pipeline_test.cpp
@@ -18,6 +23,7 @@ add_executable(lankey_tests
     unit/phrase_trie_test.cpp
     unit/suggestion_engine_test.cpp
     unit/pipeline_suggestions_test.cpp
+    unit/pipeline_autocorrect_test.cpp
     unit/lexicon_store_test.cpp
     unit/smart_worker_test.cpp
     unit/json_settings_store_test.cpp
@@ -25,7 +31,8 @@ add_executable(lankey_tests
     replay/ReplayHarness.cpp
     replay/replay_test.cpp        # one test per directory in replay/fixtures/
     replay/replay_harness_test.cpp
-    bench/pipeline_bench_test.cpp   # hot-path cost, prints numbers
+    bench/pipeline_bench_test.cpp
+    bench/autocorrect_eval_test.cpp   # hot-path cost, prints numbers
 )
 target_link_libraries(lankey_tests
     PRIVATE

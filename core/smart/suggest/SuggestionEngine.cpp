@@ -17,23 +17,6 @@ using model::SuggestionQuery;
 using model::SuggestionSettings;
 using model::Thresholds;
 
-std::u32string applyCasing(std::u32string_view typed, std::u32string_view folded) {
-    std::u32string out(folded);
-    if (typed.empty()) return out;
-
-    const bool firstUpper = text::toLower(typed[0]) != typed[0];
-    const bool allUpper = typed.size() > 1 && std::ranges::all_of(typed, [](char32_t c) {
-                              return !text::isLetter(c) || text::toLower(c) != c;
-                          });
-    if (allUpper) {
-        for (auto& c : out)
-            c = text::toUpper(c);
-    } else if (firstUpper) {
-        out[0] = text::toUpper(out[0]);
-    }
-    return out;
-}
-
 SuggestionEngine::SuggestionEngine() {
     settings_.store(std::make_shared<const SuggestionSettings>());
 }
@@ -131,7 +114,7 @@ SuggestionList SuggestionEngine::suggest(const SuggestionQuery& query) const {
                                        c.item->key.size() - c.tailStart);
         Suggestion s;
         s.phrase = c.item->entry.phrase;
-        s.insert = applyCasing(query.typed, tail);
+        s.insert = text::applyCasing(query.typed, tail);
         s.deleteCount = static_cast<int>(query.typed.size());
         s.score = c.score;
         result.push_back(std::move(s));

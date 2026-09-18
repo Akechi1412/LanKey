@@ -45,6 +45,12 @@ public:
     void hide();
     [[nodiscard]] bool visible() const noexcept { return visible_; }
 
+    // A one-line transient note ("đưởng → đường") in the dim colour, same placement as the
+    // list, no selection. hideNotice() hides only if a notice is what is showing.
+    void showNotice(const std::u32string& text,
+                    const std::optional<core::model::ScreenRect>& caret);
+    void hideNotice();
+
 private:
     struct Row {
         std::wstring context; // already on screen, drawn dim ("hệ ")
@@ -65,6 +71,7 @@ private:
     int width_ = 220;
     UINT shownDpi_ = 0; // DPI width_ was computed at; a monitor change resets the sticky width
     bool visible_ = false;
+    bool notice_ = false;    // the single row is a note, not a selectable item
     bool dwmBorder_ = false; // DWM draws the edge (Windows 11); else paint() does
 };
 

@@ -9,9 +9,11 @@
 
 namespace lankey::core::pipeline {
 
+using model::Correction;
 using model::EngineResult;
 using model::FocusContext;
 using model::KeyEvent;
+using model::Modifier;
 using model::ReplacementReason;
 using model::Suggestion;
 using model::SuggestionQuery;
@@ -25,7 +27,7 @@ InputPipeline::InputPipeline(Dependencies deps, Handlers handlers)
     : deps_(deps), handlers_(std::move(handlers)) {}
 
 InputPipeline::InputPipeline(Dependencies deps, CommitHandler onCommit)
-    : InputPipeline(deps, Handlers{std::move(onCommit), nullptr, nullptr}) {}
+    : InputPipeline(deps, Handlers{std::move(onCommit), nullptr, nullptr, nullptr, nullptr}) {}
 
 bool InputPipeline::onKey(const KeyEvent& key) noexcept {
     // Our own SendInput echoes and key-ups never touch the composition and never bump the
@@ -61,9 +63,16 @@ bool InputPipeline::onKey(const KeyEvent& key) noexcept {
 }
 
 bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
+    // The key right after an AutoCorrect: Backspace or Ctrl+Z means "no, what I typed".
+    // Checked before anything else - Ctrl+Z is the one Ctrl combination we take.
+    if (tryUndoCorrection(key, generation)) {
+        swallowNextKeyUp_ = true;
+        return true;
+    }
+    lastCorrection_.reset(); // any other key closes the undo window
+
     // Ctrl/Alt/Win combinations belong to the application (shortcuts, Alt+Tab). The
-    // composition cannot be trusted afterwards, so start over. (Ctrl+Z as AutoCorrect Undo
-    // is handled before reaching here once that feature exists.)
+    // composition cannot be trusted afterwards, so start over.
     if (key.hasSystemModifier()) {
         resetContext();
         return false;
@@ -86,14 +95,19 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     const bool swallow = applyEngineResult(result, generation);
 
     if (boundary == Boundary::None) {
-        // Backspace with nothing being composed deletes into already-committed text; the
-        // phrase context is no longer what the screen shows. Drop it rather than learn a
-        // phrase that never existed. (ManualCorrectionDetector will refine this later.)
         if (key.key == VirtualKey::Backspace && composedWasEmpty) {
-            window_.reset();
+            // Deleting into already-committed text: the phrase context is no longer what
+            // the screen shows. Drop it - but remember it: the rest of a half-deleted
+            // syllable must be glued back, and this may be a manual fix worth learning.
+            onBackspaceIntoCommitted();
         }
         buffer_.setComposed(std::move(result.composed));
         window_.current = buffer_.composed().text;
+        if (retype_ && retype_->partial && retype_->recommitted == 0) {
+            // The engine only sees what was typed after the deletion; the screen shows
+            // the untouched head of the syllable in front of it.
+            window_.current.insert(0, retype_->prefix);
+        }
         window_.generation = generation;
         refreshSuggestions(generation, /*afterWordBoundary=*/false);
         return swallow;
@@ -120,9 +134,15 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     if (!text.empty()) {
         commitSyllable(text, transformApplied, WordBoundaryDetector::terminatorFor(key),
                        generation);
+    } else if (key.unicode != 0 && !spans_.empty()) {
+        // A second space, punctuation after a space: one more character on screen behind
+        // the last syllable.
+        ++spans_.back().trailing;
     }
     if (boundary == Boundary::Paragraph) {
         window_.reset();
+        spans_.clear();
+        abandonRetype();
         deps_.engine.reset();
     }
     buffer_.clearComposed();
@@ -187,15 +207,61 @@ bool InputPipeline::applyEngineResult(const EngineResult& result, std::uint64_t 
     return false;
 }
 
-void InputPipeline::commitSyllable(const std::u32string& text, bool transformApplied,
+void InputPipeline::commitSyllable(const std::u32string& composed, bool transformApplied,
                                    char32_t terminator, std::uint64_t generation) {
+    // The whole syllable as it stands on screen: the head the user kept plus what the
+    // engine composed after the deletion.
+    std::u32string text;
+    if (retype_ && retype_->partial && retype_->recommitted == 0) text = retype_->prefix;
+    text += composed;
+
     window_.commit(Syllable::fromComposed(text));
+    spans_.push_back({static_cast<int>(text.size()), terminator != 0 ? 1 : 0, terminator});
+    trimSpans();
     ++stats_.commits;
+    lastCommitMs_ = deps_.clock.nowMonotonicMs();
+    const bool uncertain = uncertain_;
+    uncertain_ = false;
+
+    // A retype in progress: this may be the syllable that completes it.
+    std::vector<Syllable> retypedFrom;
+    if (retype_) {
+        if (++retype_->recommitted == retype_->syllablesRemoved) {
+            // The user deleted `syllablesRemoved` syllables (the last one maybe only in
+            // part) and typed as many again. Put the untouched ones back in front so the
+            // phrase context is whole again; hand the old ones to the worker when the edit
+            // came soon enough after the commit to be a fix of it.
+            const auto removed = static_cast<std::size_t>(retype_->syllablesRemoved);
+            auto& old = retype_->window;
+            if (retype_->learnable) {
+                retypedFrom.assign(old.end() - static_cast<std::ptrdiff_t>(removed), old.end());
+            }
+            std::vector<Syllable> restored(old.begin(),
+                                           old.end() - static_cast<std::ptrdiff_t>(removed));
+            std::vector<Span> restoredSpans(retype_->spans.begin(),
+                                            retype_->spans.end() -
+                                                static_cast<std::ptrdiff_t>(removed));
+            restored.insert(restored.end(), window_.committed.begin(), window_.committed.end());
+            restoredSpans.insert(restoredSpans.end(), spans_.begin(), spans_.end());
+            window_.committed = std::move(restored);
+            spans_ = std::move(restoredSpans);
+            while (window_.committed.size() >
+                   static_cast<std::size_t>(Thresholds::kMaxPhraseSyllables)) {
+                window_.committed.erase(window_.committed.begin());
+            }
+            trimSpans();
+            abandonRetype();
+            if (!retypedFrom.empty()) ++stats_.retypesDetected;
+        }
+    }
+
     if (!handlers_.onCommit) {
         return;
     }
     SyllableCommitted event;
     event.window = window_; // copy: the worker must never see our live window
+    event.retypedFrom = std::move(retypedFrom);
+    event.uncertain = uncertain;
     event.terminator = terminator;
     event.vietnameseTransformApplied = transformApplied;
     if (const auto focus = deps_.focus.current()) {
@@ -302,7 +368,10 @@ void InputPipeline::selectSuggestion(std::size_t index, std::uint64_t generation
     const std::size_t first = syllables.size() > inserted ? syllables.size() - inserted : 0;
     for (std::size_t i = first; i < syllables.size(); ++i) {
         window_.commit(syllables[i]);
+        spans_.push_back({static_cast<int>(syllables[i].text.size()), 1, U' '});
     }
+    trimSpans();
+    abandonRetype();
     // No SyllableCommitted per syllable: that would count the phrase as typed. The
     // selection handler records it once, with the higher selection weight.
     if (handlers_.onSelection) handlers_.onSelection(chosen.phrase);
@@ -345,6 +414,10 @@ void InputPipeline::resetContext() {
     deps_.engine.reset();
     buffer_.clearComposed();
     window_.reset();
+    spans_.clear();
+    abandonRetype();
+    uncertain_ = false;
+    lastCorrection_.reset();
     popupSuppressed_ = false;
     swallowNextKeyUp_ = false;
     hidePopup();
@@ -359,6 +432,201 @@ void InputPipeline::resetContextNoexcept() noexcept {
         // the next key will try again. Counted so it shows up in diagnostics.
         ++stats_.exceptionsSwallowed;
     }
+}
+
+void InputPipeline::trimSpans() {
+    while (spans_.size() > window_.committed.size())
+        spans_.erase(spans_.begin());
+}
+
+void InputPipeline::onBackspaceIntoCommitted() {
+    const std::int64_t now = deps_.clock.nowMonotonicMs();
+    // Deleting again after having retyped something: a different edit; start over from
+    // what is on screen now.
+    if (retype_ && retype_->recommitted > 0) abandonRetype();
+    if (!retype_) {
+        if (window_.committed.empty()) {
+            // Text we never saw (typed before LanKey, another app, past the window): the
+            // next syllable may be only the tail of a word.
+            uncertain_ = true;
+            return;
+        }
+        Retype r;
+        r.window = std::move(window_.committed);
+        r.spans = std::move(spans_);
+        // Only a deletion that starts soon after the commit can be a fix of that commit.
+        r.learnable = now - lastCommitMs_ <= Thresholds::kRetypeWindowMs;
+        retype_ = std::move(r);
+        window_.reset();
+        spans_.clear();
+    }
+    ++retype_->deleted;
+    // Where does the deletion sit now? Walk back over the spans: on a syllable edge, or
+    // inside a syllable (its remaining head becomes `prefix`).
+    retype_->syllablesRemoved = 0;
+    retype_->partial = false;
+    retype_->prefix.clear();
+    int rest = retype_->deleted;
+    const auto n = static_cast<int>(retype_->spans.size());
+    for (int i = n; i-- > 0;) {
+        const Span& span = retype_->spans[static_cast<std::size_t>(i)];
+        const int total = span.typedLength + span.trailing;
+        if (rest == total) {
+            retype_->syllablesRemoved = n - i;
+            return;
+        }
+        if (rest < total) {
+            const int intoTyped = std::max(0, rest - span.trailing);
+            const auto& typed = retype_->window[static_cast<std::size_t>(i)].typed;
+            retype_->partial = true;
+            retype_->prefix = typed.substr(0, typed.size() - static_cast<std::size_t>(intoTyped));
+            retype_->syllablesRemoved = n - i; // this one will be retyped from `prefix`
+            return;
+        }
+        rest -= total;
+    }
+    abandonRetype(); // deleted past everything we knew about
+    uncertain_ = true;
+}
+
+bool InputPipeline::tryUndoCorrection(const KeyEvent& key, std::uint64_t generation) {
+    if (!lastCorrection_) return false;
+    const bool ctrlZ = key.key == VirtualKey::Z && has(key.modifiers, Modifier::Control) &&
+                       !has(key.modifiers, Modifier::Alt) && !has(key.modifiers, Modifier::Win);
+    const bool backspace = key.key == VirtualKey::Backspace && !key.hasSystemModifier();
+    if (!ctrlZ && !backspace) return false;
+    const auto& c = *lastCorrection_;
+    // "The very next key": this key bumped the generation exactly once past the apply.
+    if (generation != c.generation + 1) return false;
+    if (deps_.clock.nowMonotonicMs() - c.appliedMs > Thresholds::kUndoWindowMs) return false;
+
+    TextReplacement cmd;
+    cmd.deleteCount = static_cast<int>(c.insertedText.size()) + (c.terminator != 0 ? 1 : 0);
+    for (std::size_t i = 0; i < c.original.size(); ++i) {
+        if (i > 0) cmd.insert.push_back(c.originalSpans[i - 1].terminator);
+        cmd.insert += c.original[i].typed;
+    }
+    if (c.terminator != 0) cmd.insert.push_back(c.terminator);
+    cmd.expectedGeneration = generation;
+    cmd.reason = ReplacementReason::Undo;
+    deps_.sink.apply(cmd);
+    ++stats_.replacementsApplied;
+    ++stats_.correctionsUndone;
+
+    // The window goes back to what the user typed.
+    const std::size_t n = window_.committed.size();
+    const std::size_t k = c.original.size();
+    if (k <= n) {
+        for (std::size_t i = 0; i < k; ++i) {
+            window_.committed[n - k + i] = c.original[i];
+            spans_[n - k + i] = c.originalSpans[i];
+        }
+    }
+    if (handlers_.onCorrectionRejected) {
+        handlers_.onCorrectionRejected(c.wrongKey, text::caseFold(c.insertedText));
+    }
+    if (!recent_.empty()) {
+        const std::size_t last = (recentNext_ + recent_.size() - 1) % recent_.size();
+        if (recent_[last].corrected == c.insertedText) recent_[last].undone = true;
+    }
+    lastCorrection_.reset();
+    hidePopup();
+    clearPending();
+    if (handlers_.onPopup) handlers_.onPopup(PopupState{}); // takes the notice down too
+    return true;
+}
+
+bool InputPipeline::applyCorrection(const Correction& correction) {
+    if (!buffer_.matches(correction.expectedGeneration)) {
+        ++stats_.correctionsDropped;
+        return false;
+    }
+    const auto k = static_cast<std::size_t>(correction.syllableCount);
+    const std::size_t n = window_.committed.size();
+    if (k == 0 || k > n || correction.corrected.size() != k || spans_.size() != n) {
+        ++stats_.correctionsDropped;
+        return false;
+    }
+    // Rebuild the exact span on screen: syllable, separator, syllable ... terminator. A
+    // separator wider than one character (", ") cannot be retyped faithfully: give up.
+    std::u32string original;
+    std::u32string inserted;
+    for (std::size_t i = n - k; i < n; ++i) {
+        if (spans_[i].trailing != 1 || spans_[i].terminator == 0) {
+            ++stats_.correctionsDropped;
+            return false;
+        }
+        if (i > n - k) {
+            original.push_back(spans_[i - 1].terminator);
+            inserted.push_back(spans_[i - 1].terminator);
+        }
+        original += window_.committed[i].typed;
+        inserted +=
+            text::applyCasing(window_.committed[i].typed, correction.corrected[i - (n - k)].text);
+    }
+    if (inserted == original) return false; // a rule that changes nothing
+    const char32_t terminator = spans_[n - 1].terminator;
+
+    TextReplacement cmd;
+    cmd.deleteCount = static_cast<int>(original.size()) + 1;
+    cmd.insert = inserted;
+    cmd.insert.push_back(terminator);
+    cmd.expectedGeneration = correction.expectedGeneration;
+    cmd.reason = ReplacementReason::AutoCorrect;
+    deps_.sink.apply(cmd);
+    ++stats_.replacementsApplied;
+    ++stats_.correctionsApplied;
+
+    AppliedCorrection applied;
+    applied.original.assign(window_.committed.begin() + static_cast<std::ptrdiff_t>(n - k),
+                            window_.committed.end());
+    applied.originalSpans.assign(spans_.begin() + static_cast<std::ptrdiff_t>(n - k), spans_.end());
+    applied.insertedText = inserted;
+    applied.terminator = terminator;
+    applied.wrongKey = correction.wrongKey;
+    // Patch the window so learning and suggestions see the corrected phrase.
+    for (std::size_t i = n - k; i < n; ++i) {
+        auto& syl = window_.committed[i];
+        syl.typed = text::applyCasing(syl.typed, correction.corrected[i - (n - k)].text);
+        syl.text = correction.corrected[i - (n - k)].text;
+        spans_[i].typedLength = static_cast<int>(syl.typed.size());
+    }
+    // The screen changed under everything computed so far.
+    applied.generation = buffer_.bump();
+    applied.appliedMs = deps_.clock.nowMonotonicMs();
+    // Ring buffer for Undo diagnostics and the Settings page.
+    RecentCorrection entry{original, inserted, applied.appliedMs, false};
+    if (recent_.size() < static_cast<std::size_t>(Thresholds::kRecentCorrections)) {
+        recent_.push_back(std::move(entry));
+        recentNext_ = 0;
+    } else {
+        recent_[recentNext_] = std::move(entry);
+        recentNext_ = (recentNext_ + 1) % recent_.size();
+    }
+    lastCorrection_ = std::move(applied);
+    abandonRetype();
+    hidePopup();
+    clearPending();
+    if (handlers_.onCorrectionApplied) handlers_.onCorrectionApplied(correction.wrongKey);
+    if (handlers_.onPopup) {
+        // Never correct silently: the UI shows "original -> corrected" for a moment.
+        PopupState notice;
+        notice.generation = buffer_.generation();
+        notice.notice = original + U" \u2192 " + inserted;
+        handlers_.onPopup(notice);
+    }
+    return true;
+}
+
+std::vector<InputPipeline::RecentCorrection> InputPipeline::recentCorrections() const {
+    std::vector<RecentCorrection> out;
+    out.reserve(recent_.size());
+    for (std::size_t i = 0; i < recent_.size(); ++i) {
+        // Newest first: walk backwards from the slot before recentNext_.
+        const std::size_t idx = (recentNext_ + recent_.size() - 1 - i) % recent_.size();
+        out.push_back(recent_[idx]);
+    }
+    return out;
 }
 
 bool InputPipeline::applyReplacement(const TextReplacement& replacement) {

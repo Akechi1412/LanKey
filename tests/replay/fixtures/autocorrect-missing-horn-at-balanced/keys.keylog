@@ -1,0 +1,7 @@
+# Forgetting the horn key entirely: "dduongf" gives "đuòng", 0.8 from "đường". Out of
+# reach for Cautious, fixed at Balanced for a user who writes "đường".
+{"lexicon":[["đường",5]]}
+{"autocorrect":"cautious"}
+{"text":"dduongf "}
+{"autocorrect":"balanced"}
+{"text":"dduongf "}

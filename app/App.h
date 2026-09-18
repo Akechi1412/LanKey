@@ -8,6 +8,7 @@
 #include "core/pipeline/InputPipeline.h"
 #include "core/pipeline/ToggleHotkey.h"
 #include "core/smart/SmartWorker.h"
+#include "core/smart/correct/AutoCorrectEngine.h"
 #include "core/smart/suggest/SuggestionEngine.h"
 #include "core/storage/JsonSettingsStore.h"
 #include "core/storage/SqliteLexiconStore.h"
@@ -55,6 +56,7 @@ private:
     void applyVietnameseEnabled(bool enabled);
     void setInputMethod(core::model::InputMethod method);
     void setSuggestionsEnabled(bool enabled);
+    void setAutoCorrectEnabled(bool enabled);
     void confirmEraseAllData();
     void saveSettings();
     void refreshTray();
@@ -71,6 +73,7 @@ private:
     platform::win32::FocusWatcher focus_;
     platform::win32::CaretResolver caret_;
     core::smart::SuggestionEngine suggestions_;
+    core::smart::AutoCorrectEngine corrector_;
     std::unique_ptr<core::storage::SqliteLexiconStore> store_;
     std::unique_ptr<core::smart::SmartWorker> worker_;
     std::unique_ptr<core::pipeline::InputPipeline> pipeline_;

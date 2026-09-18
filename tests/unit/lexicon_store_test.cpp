@@ -120,6 +120,108 @@ TYPED_TEST(LexiconStoreContract, EraseAllLeavesNothing) {
     EXPECT_EQ(this->store->loadAll()->size(), 1u);
 }
 
+// -- correction_map / blacklist ---------------------------------------------------------------
+
+using model::CorrectionRule;
+using model::CorrectionRuleSource;
+
+const CorrectionRule* rule(const std::vector<CorrectionRule>& all, const std::u32string& wrong) {
+    for (const auto& r : all) {
+        if (r.wrong == wrong) return &r;
+    }
+    return nullptr;
+}
+
+TYPED_TEST(LexiconStoreContract, CorrectionsStartEmpty) {
+    EXPECT_TRUE(this->store->loadCorrections()->empty());
+    EXPECT_TRUE(this->store->loadBlacklist()->empty());
+}
+
+TYPED_TEST(LexiconStoreContract, ReinforceAccumulatesConfidenceCappedAtOne) {
+    for (int i = 0; i < 6; ++i) {
+        ASSERT_TRUE(this->store
+                        ->reinforceCorrection(U"sữa lỗi", U"sửa lỗi", 0.2,
+                                              CorrectionRuleSource::Learned, 100 + i)
+                        .has_value());
+    }
+    const auto all = this->store->loadCorrections();
+    ASSERT_TRUE(all.has_value());
+    const auto* r = rule(*all, U"sữa lỗi");
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->correct, U"sửa lỗi");
+    EXPECT_DOUBLE_EQ(r->confidence, 1.0);
+    EXPECT_EQ(r->source, CorrectionRuleSource::Learned);
+    EXPECT_EQ(r->timesRejected, 0);
+}
+
+TYPED_TEST(LexiconStoreContract, ReinforceWithNewTargetStartsOver) {
+    ASSERT_TRUE(
+        this->store
+            ->reinforceCorrection(U"chuơng", U"chương", 0.6, CorrectionRuleSource::Learned, 1)
+            .has_value());
+    ASSERT_TRUE(
+        this->store
+            ->reinforceCorrection(U"chuơng", U"chướng", 0.2, CorrectionRuleSource::Learned, 2)
+            .has_value());
+    const auto* r = rule(*this->store->loadCorrections(), U"chuơng");
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->correct, U"chướng");
+    EXPECT_DOUBLE_EQ(r->confidence, 0.2);
+}
+
+TYPED_TEST(LexiconStoreContract, RejectLowersConfidenceAndBlacklistsAtThreshold) {
+    ASSERT_TRUE(
+        this->store->reinforceCorrection(U"sữa", U"sửa", 0.8, CorrectionRuleSource::Learned, 1)
+            .has_value());
+    auto first = this->store->rejectCorrection(U"sữa", 0.3, 2);
+    ASSERT_TRUE(first.has_value());
+    EXPECT_FALSE(*first);
+    {
+        const auto* r = rule(*this->store->loadCorrections(), U"sữa");
+        ASSERT_NE(r, nullptr);
+        EXPECT_NEAR(r->confidence, 0.5, 1e-9);
+        EXPECT_EQ(r->timesRejected, 1);
+    }
+    auto second = this->store->rejectCorrection(U"sữa", 0.3, 3);
+    ASSERT_TRUE(second.has_value());
+    EXPECT_TRUE(*second);
+    const auto black = this->store->loadBlacklist();
+    ASSERT_TRUE(black.has_value());
+    ASSERT_EQ(black->size(), 1u);
+    EXPECT_EQ((*black)[0], U"sữa");
+}
+
+TYPED_TEST(LexiconStoreContract, RejectingADictionaryCorrectionCountsToo) {
+    // No rule exists for a fuzzy dictionary correction; two Undos still blacklist it.
+    ASSERT_FALSE(*this->store->rejectCorrection(U"nguời", 0.3, 1));
+    ASSERT_TRUE(*this->store->rejectCorrection(U"nguời", 0.3, 2));
+    EXPECT_EQ(this->store->loadBlacklist()->size(), 1u);
+}
+
+TYPED_TEST(LexiconStoreContract, ManualBlacklistAndAppliedCounter) {
+    ASSERT_TRUE(this->store->blacklist(U"git", 1).has_value());
+    ASSERT_TRUE(this->store->blacklist(U"git", 2).has_value()); // idempotent
+    EXPECT_EQ(this->store->loadBlacklist()->size(), 1u);
+
+    ASSERT_TRUE(this->store->reinforceCorrection(U"a", U"b", 0.2, CorrectionRuleSource::User, 1)
+                    .has_value());
+    ASSERT_TRUE(this->store->noteCorrectionApplied(U"a").has_value());
+    ASSERT_TRUE(this->store->noteCorrectionApplied(U"a").has_value());
+    const auto* r = rule(*this->store->loadCorrections(), U"a");
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->timesApplied, 2);
+    EXPECT_EQ(r->source, CorrectionRuleSource::User);
+}
+
+TYPED_TEST(LexiconStoreContract, EraseAllClearsCorrectionsAndBlacklist) {
+    ASSERT_TRUE(this->store->reinforceCorrection(U"a", U"b", 0.2, CorrectionRuleSource::Learned, 1)
+                    .has_value());
+    ASSERT_TRUE(this->store->blacklist(U"c", 1).has_value());
+    ASSERT_TRUE(this->store->eraseAll().has_value());
+    EXPECT_TRUE(this->store->loadCorrections()->empty());
+    EXPECT_TRUE(this->store->loadBlacklist()->empty());
+}
+
 // -- SQLite-specific: files, persistence, migrations, cleanup ------------------------------
 
 struct TempDb {

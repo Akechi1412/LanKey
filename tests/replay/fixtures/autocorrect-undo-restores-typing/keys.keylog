@@ -1,0 +1,7 @@
+# Backspace right after a correction puts the user's own spelling back (space included);
+# the Backspace after that is an ordinary one.
+{"lexicon":[["đường",5]]}
+{"autocorrect":"cautious"}
+{"text":"dduowngr "}
+{"k":"Backspace"}
+{"k":"Backspace"}

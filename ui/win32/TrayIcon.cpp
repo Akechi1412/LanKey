@@ -24,6 +24,7 @@ enum MenuId : UINT {
     kMenuVni,
     kMenuSimpleTelex,
     kMenuSuggestions,
+    kMenuAutoCorrect,
     kMenuEraseData,
     kMenuQuit,
 };
@@ -87,10 +88,11 @@ void TrayIcon::destroy() {
     iconEnglish_ = nullptr;
 }
 
-void TrayIcon::setState(bool vietnamese, InputMethod method, bool suggestions) {
+void TrayIcon::setState(bool vietnamese, InputMethod method, bool suggestions, bool autoCorrect) {
     vietnamese_ = vietnamese;
     method_ = method;
     suggestions_ = suggestions;
+    autoCorrect_ = autoCorrect;
     updateIcon();
 }
 
@@ -235,6 +237,9 @@ LRESULT TrayIcon::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
         case kMenuSuggestions:
             if (callbacks_.onSuggestionsEnabled) callbacks_.onSuggestionsEnabled(!suggestions_);
             break;
+        case kMenuAutoCorrect:
+            if (callbacks_.onAutoCorrectEnabled) callbacks_.onAutoCorrectEnabled(!autoCorrect_);
+            break;
         case kMenuEraseData:
             if (callbacks_.onEraseAllData) callbacks_.onEraseAllData();
             break;
@@ -276,6 +281,7 @@ void TrayIcon::showMenu() {
                 L"Telex đơn giản");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(suggestions_), kMenuSuggestions, L"Gợi ý cụm từ");
+    AppendMenuW(menu, check(autoCorrect_), kMenuAutoCorrect, L"Tự sửa lỗi chính tả");
     AppendMenuW(menu, MF_STRING, kMenuEraseData, L"Xoá toàn bộ dữ liệu đã học...");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuQuit, L"Thoát");

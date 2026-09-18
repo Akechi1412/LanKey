@@ -23,6 +23,7 @@ TEST(JsonSettingsStore, RoundTripsEveryField) {
     s.suggestions.minPrefixLength = 3;
     s.suggestions.weightRecency = 0.25;
     s.autoCorrect.level = AutoCorrectLevel::Aggressive;
+    s.autoCorrect.excludedApps = {"x.exe"};
     s.privacy.excludedApps = {"a.exe", "b.exe"};
     s.privacy.suggestionsDisabledApps = {"c.exe"};
 

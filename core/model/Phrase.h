@@ -10,12 +10,13 @@
 
 namespace lankey::core::model {
 
-// One syllable as the Smart Layer sees it: the engine's composed output, NFC, case-folded.
-// "Chương" and "chương" produce the same Syllable; the original casing is not kept here
-// (re-applying the user's capitalisation is done at replacement time from what is on
-// screen).
+// One syllable as the Smart Layer sees it: the engine's composed output, NFC, case-folded
+// in `text` (the lexicon key: "Chương" and "chương" are the same entry) and exactly as it
+// appears on screen in `typed` (needed to retype it with the same casing on AutoCorrect).
+// Entries loaded from the lexicon have an empty `typed`.
 struct Syllable {
-    std::u32string text; // "chương"
+    std::u32string text;  // "chương"
+    std::u32string typed; // "Chương" - as on screen; empty for lexicon entries
 
     // Build from engine output (already NFC in practice; normalised again as a guard).
     [[nodiscard]] static Syllable fromComposed(std::u32string_view composed);
@@ -31,6 +32,8 @@ struct Phrase {
 
     // "chương trình" - the lexicon key and what the user sees.
     [[nodiscard]] std::u32string joined() const;
+    // The inverse for folded keys ("chương trình" -> two syllables, `typed` empty).
+    [[nodiscard]] static Phrase fromJoined(std::u32string_view joined);
     [[nodiscard]] int syllableCount() const noexcept { return static_cast<int>(syllables.size()); }
 
     friend bool operator==(const Phrase&, const Phrase&) = default;

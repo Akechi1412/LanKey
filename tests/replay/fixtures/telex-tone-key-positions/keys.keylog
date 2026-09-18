@@ -1,0 +1,6 @@
+# Telex accepts the tone key anywhere after the vowel: at the end, right after the vowel,
+# before or after the modifier key. All four spell "đường"; the same slip in any position
+# is the same syllable to AutoCorrect.
+{"lexicon":[["đường",5]]}
+{"autocorrect":"cautious"}
+{"text":"dduowngf dduongwf dduowfng dduofwng dduongfw dduowngr dduongwr dduowrng dduongrw "}

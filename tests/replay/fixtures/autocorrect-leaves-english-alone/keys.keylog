@@ -1,0 +1,4 @@
+# Interleaved English: no Vietnamese transform was applied, so the closed dictionary must
+# not turn "with" or "git" into anything. "the" is even a valid syllable.
+{"autocorrect":"aggressive"}
+{"text":"the with git "}

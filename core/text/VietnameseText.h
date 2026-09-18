@@ -38,5 +38,13 @@ namespace lankey::core::text {
 
 // True when the letter carries a tone mark or modifier (ă â ê ô ơ ư đ or any toned vowel).
 [[nodiscard]] bool hasDiacritic(char32_t c) noexcept;
+// True when the letter carries a TONE mark (sắc huyền hỏi ngã nặng); modifiers alone
+// (ă â ê ô ơ ư đ) do not count. A syllable has a tone when any of its letters does.
+[[nodiscard]] bool hasTone(char32_t c) noexcept;
+[[nodiscard]] bool hasTone(std::u32string_view s) noexcept;
+
+// Re-apply the casing pattern of `typed` to the folded `folded`: "Chư" -> "Chương",
+// "CHƯ" -> "CHƯƠNG", "chư" -> "chương". A single capital counts as capitalised.
+[[nodiscard]] std::u32string applyCasing(std::u32string_view typed, std::u32string_view folded);
 
 } // namespace lankey::core::text

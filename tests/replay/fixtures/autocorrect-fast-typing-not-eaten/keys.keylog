@@ -1,0 +1,5 @@
+# The worker answers only after the next key was typed: the generation no longer matches,
+# the correction is dropped, and nothing of the new word is eaten.
+{"lexicon":[["đường",5]]}
+{"autocorrect":"cautious","lag":1}
+{"text":"dduowngr ddi "}

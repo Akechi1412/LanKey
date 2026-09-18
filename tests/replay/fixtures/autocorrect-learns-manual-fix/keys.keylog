@@ -1,0 +1,45 @@
+# Both "sữa lỗi" and "sửa lỗi" are valid Vietnamese; only the user's habit says which is
+# meant. Four times the user deletes the phrase and retypes it: each is a manual fix
+# (+0.2). At 0.8 the rule fires and the fifth "sữa lỗi" is corrected on its own.
+{"autocorrect":"cautious"}
+{"text":"suwax looix "}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"text":"suwar looix "}
+{"text":"suwax looix "}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"text":"suwar looix "}
+{"text":"suwax looix "}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"text":"suwar looix "}
+{"text":"suwax looix "}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"k":"Backspace"}
+{"text":"suwar looix "}
+{"text":"suwax looix "}

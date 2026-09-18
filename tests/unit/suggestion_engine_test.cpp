@@ -6,6 +6,7 @@
 #include "core/model/Thresholds.h"
 #include "core/smart/suggest/Scorer.h"
 #include "core/smart/suggest/SuggestionEngine.h"
+#include "core/text/VietnameseText.h"
 
 namespace lankey::core::smart {
 namespace {
@@ -180,11 +181,11 @@ TEST_F(SuggestionEngineTest, DisabledInSettings) {
 }
 
 TEST(ApplyCasing, MirrorsWhatWasTyped) {
-    EXPECT_EQ(applyCasing(U"chư", U"chương trình"), U"chương trình");
-    EXPECT_EQ(applyCasing(U"Chư", U"chương trình"), U"Chương trình");
-    EXPECT_EQ(applyCasing(U"CHƯ", U"chương trình"), U"CHƯƠNG TRÌNH");
-    EXPECT_EQ(applyCasing(U"C", U"chương"), U"Chương"); // a single capital = capitalised
-    EXPECT_EQ(applyCasing(U"", U"x"), U"x");
+    EXPECT_EQ(text::applyCasing(U"chư", U"chương trình"), U"chương trình");
+    EXPECT_EQ(text::applyCasing(U"Chư", U"chương trình"), U"Chương trình");
+    EXPECT_EQ(text::applyCasing(U"CHƯ", U"chương trình"), U"CHƯƠNG TRÌNH");
+    EXPECT_EQ(text::applyCasing(U"C", U"chương"), U"Chương"); // a single capital = capitalised
+    EXPECT_EQ(text::applyCasing(U"", U"x"), U"x");
 }
 
 } // namespace

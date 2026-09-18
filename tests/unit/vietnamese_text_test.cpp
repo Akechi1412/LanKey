@@ -69,5 +69,18 @@ TEST(HasDiacritic, DetectsMarks) {
     EXPECT_FALSE(hasDiacritic(U'1'));
 }
 
+TEST(VietnameseText, HasToneDistinguishesTonesFromModifiers) {
+    EXPECT_TRUE(hasTone(U'ờ'));
+    EXPECT_TRUE(hasTone(U'á'));
+    EXPECT_TRUE(hasTone(U'Ệ'));
+    EXPECT_FALSE(hasTone(U'ơ'));
+    EXPECT_FALSE(hasTone(U'ư'));
+    EXPECT_FALSE(hasTone(U'đ'));
+    EXPECT_FALSE(hasTone(U'a'));
+    EXPECT_TRUE(hasTone(U"đường"));
+    EXPECT_FALSE(hasTone(U"đương"));
+    EXPECT_FALSE(hasTone(U"with"));
+}
+
 } // namespace
 } // namespace lankey::core::text

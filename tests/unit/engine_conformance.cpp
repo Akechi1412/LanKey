@@ -46,6 +46,49 @@ EngineSettings vni() {
     s.inputMethod = InputMethod::Vni;
     return s;
 }
+// User-defined method: VNI digits for the tones, Telex letters for the modifiers, '9' for đ.
+EngineSettings custom() {
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = "1,2,3,4,5,a,o,e,w,9,z,,";
+    return s;
+}
+EngineSettings customVniLike() {
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = "1,2,3,4,5,6,6,7,8,9,0,,";
+    return s;
+}
+// Several keys per function: Telex plus the VNI digits, '[' for the horn as well.
+EngineSettings customMulti() {
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = "s1,f2,r3,x4,j5,a,o,e,w[,d9,z0,,";
+    return s;
+}
+EngineSettings customPunct() {
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = ";,',/,\\,.,a,o,e,],d,-,,";
+    return s;
+}
+EngineSettings customStandalone() {
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = "s,f,r,x,j,a,o,e,w,d,z,[,]";
+    return s;
+}
+EngineSettings customStandaloneQ() { // any key will do, not only the brackets
+    EngineSettings s;
+    s.inputMethod = InputMethod::Custom;
+    s.customKeys = "s,f,r,x,j,a,o,e,w,d,z,q,";
+    return s;
+}
+EngineSettings withTable(core::model::CodeTable table) {
+    EngineSettings s;
+    s.codeTable = table;
+    return s;
+}
 
 // clang-format off
 const std::vector<EngineCase> kCases = {
@@ -92,13 +135,55 @@ const std::vector<EngineCase> kCases = {
     // After Backspace the tone must move back to where the (now shorter) syllable
     // wants it, respecting the classic/modern setting. (VKey 8bb2bd0, evaluated as an
     // alternative engine, re-placed it in modern style regardless of the setting.)
-    {"telex_bs_replaces_tone_classic", telexClassic(), "hoafn", U"hòa", std::nullopt},
-    {"telex_bs_replaces_tone_modern",  telex(),        "hoafn", U"hoà", std::nullopt},
+    {"telex_bs_replaces_tone_classic", telexClassic(), "hoafn\b", U"hòa", std::nullopt},
+    {"telex_bs_replaces_tone_modern",  telex(),        "hoafn\b", U"hoà", std::nullopt},
 
     // -- VNI -------------------------------------------------------------------
     {"vni_tieng",                  vni(), "tie6ng1", U"tiếng", true},
     {"vni_viet",                   vni(), "vie6t5",  U"việt",  true},
     {"vni_dieu",                   vni(), "dieu96",  U"điêu",  true},     // upstream issue #72
+
+    // -- User-defined method (engine patch 002) --------------------------------
+    {"custom_tieng",               custom(), "tieeng1",  U"tiếng", true},
+    {"custom_dong",                custom(), "d9oong2",  U"đồng",  true}, // đ = d + đ-key, as in VNI
+    {"custom_hoi",                 custom(), "hoi3",     U"hỏi",   true},
+    {"custom_horn",                custom(), "tuwowng4", U"tưỡng", true},
+    {"custom_s_is_plain",          custom(), "las ",     U"las ",  std::nullopt}, // 's' no longer a tone key
+    {"custom_bs_keeps_tone",       custom(), "tieeng1\b", U"tiến", std::nullopt},
+    // Modifier keys that are not the Telex letters: VNI-style, 6 shared by â and ô.
+    {"custom_vni_like_tieng",      customVniLike(), "tie7ng1", U"tiếng", true},
+    {"custom_vni_like_dong",       customVniLike(), "d9o6ng2", U"đồng",  true},
+    {"custom_vni_like_can",        customVniLike(), "ca6n1",   U"cấn",   true},
+    {"custom_vni_like_duong",      customVniLike(), "d9uo8ng2", U"đường", true},
+    // Several keys for one function (Unikey-style): either spelling works.
+    {"custom_multi_telex_keys",    customMulti(), "tieengs",   U"tiếng", true},
+    {"custom_multi_vni_keys",      customMulti(), "tieeng1",   U"tiếng", true},
+    {"custom_multi_bracket_horn",  customMulti(), "tu[o[ng",   U"tương", true},
+    {"custom_multi_mixed",         customMulti(), "d9uwowng2", U"đường", true},
+    // Standalone letters: the Telex [ ] keys, Shift for capitals, w alone for ư.
+    {"custom_standalone_o",        customStandalone(), "[",    U"ơ",   true},
+    {"custom_standalone_u",        customStandalone(), "]",    U"ư",   true},
+    {"custom_standalone_cap",      customStandalone(), "{}",   U"ƠƯ",  true},
+    {"custom_standalone_word",     customStandalone(), "m[i",  U"mơi", true},
+    {"custom_standalone_w_alone",  customStandalone(), "w",    U"ư",   true},
+    {"custom_standalone_q_key",    customStandaloneQ(), "q",   U"ơ",   true},
+    {"custom_no_standalone_bracket", custom(), "[",  U"[",  std::nullopt}, // not assigned: plain key
+    // Punctuation the engine normally treats as a word break can be a function key.
+    {"custom_punct_tone",          customPunct(), "tieeng;",   U"tiếng", true},
+    {"custom_punct_horn_bs",       customPunct(), "tu]o]ng\b", U"tươn",  std::nullopt},
+    {"custom_punct_unassigned_breaks", customPunct(), "tieeng, ", U"tiêng, ", std::nullopt},
+
+    // -- Legacy code tables: font code points on screen, two units for a marked letter --
+    {"compound_tieng",             withTable(core::model::CodeTable::UnicodeCompound),
+                                   "tieengs",   U"tiếng",  std::nullopt},
+    {"compound_bs_removes_both",   withTable(core::model::CodeTable::UnicodeCompound),
+                                   "tieengs\b\b\b", U"ti", std::nullopt},
+    {"compound_duong",             withTable(core::model::CodeTable::UnicodeCompound),
+                                   "dduwowngf", U"đường", std::nullopt},
+    {"vni_windows_tieng",          withTable(core::model::CodeTable::VniWindows),
+                                   "tieengs",   U"tieáng",  std::nullopt}, // 'e' + VNI ế glyph 0xE1
+    {"tcvn3_tieng",                withTable(core::model::CodeTable::Tcvn3),
+                                   "tieengs",   U"tiÕng",   std::nullopt}, // ABC: ế at 0xD5
 };
 // clang-format on
 

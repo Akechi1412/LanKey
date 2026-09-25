@@ -92,6 +92,7 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     const bool composedWasEmpty = buffer_.composed().text.empty();
 
     EngineResult result = deps_.engine.process(key);
+    keepPrefixInStep(result, key);
     const bool swallow = applyEngineResult(result, generation);
 
     if (boundary == Boundary::None) {
@@ -126,6 +127,7 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
             text.pop_back();
         }
         transformApplied = result.composed.vietnameseTransformApplied;
+        restoredFrom_ = result.restoredFrom;
     } else {
         text = before.text;
         transformApplied = before.vietnameseTransformApplied;
@@ -134,6 +136,20 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     if (!text.empty()) {
         commitSyllable(text, transformApplied, WordBoundaryDetector::terminatorFor(key),
                        generation);
+    } else if (retype_ && retype_->partial && retype_->recommitted == 0 &&
+               !retype_->prefix.empty()) {
+        // Nothing was typed since the deletion and the head is still waiting, so the
+        // syllable on screen is one that was committed before. Left in `prefix` it would
+        // be glued onto the NEXT syllable ("chào" + "bạn" -> "chàobạn") and AutoCorrect
+        // would see a word nobody typed.
+        if (restoreUntouchedSyllable(WordBoundaryDetector::terminatorFor(key))) {
+            // The syllable itself was never touched (only its separator): the window is
+            // back the way it was. Committing it again would teach the worker a word the
+            // user typed once.
+        } else {
+            commitSyllable(std::u32string{}, retype_->prefixTransformApplied,
+                           WordBoundaryDetector::terminatorFor(key), generation);
+        }
     } else if (key.unicode != 0 && !spans_.empty()) {
         // A second space, punctuation after a space: one more character on screen behind
         // the last syllable.
@@ -160,11 +176,56 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     return swallow;
 }
 
+bool InputPipeline::restoreUntouchedSyllable(char32_t terminator) {
+    Retype& r = *retype_;
+    // Only the simple shape: the deletion stopped exactly at the end of the last syllable
+    // and took nothing off it. Anything else really is a new syllable.
+    if (r.syllablesRemoved != 1 || r.window.empty() || r.prefix != r.window.back().typed) {
+        return false;
+    }
+    window_.committed = std::move(r.window);
+    spans_ = std::move(r.spans);
+    Span& last = spans_.back();
+    last.trailing = terminator != 0 ? 1 : 0;
+    last.separator = terminator != 0 ? std::u32string(1, terminator) : std::u32string();
+    last.terminator = terminator;
+    abandonRetype();
+    return true;
+}
+
+void InputPipeline::keepPrefixInStep(const EngineResult& result, const KeyEvent& key) {
+    // The engine rewrites the syllable it is composing by deleting characters off the end
+    // of the screen. After a deletion into committed text the screen also holds a head
+    // that only this thread knows about (`prefix`), and the engine's delete count can
+    // reach into it: typing "f" after deleting the space behind "chao" makes the engine
+    // delete "o" and insert "ào", leaving "cha" + "ào" on screen. Shorten the head by
+    // whatever the engine deleted beyond its own text, or the commit would repeat those
+    // characters ("chao" + "ào" = "chaoào") and AutoCorrect would see a word nobody typed.
+    //
+    // Backspace is not one of these: its own bookkeeping already recomputes the head.
+    if (result.action != EngineResult::Action::Replace) return;
+    if (key.key == VirtualKey::Backspace) return;
+    if (!retype_ || !retype_->partial || retype_->recommitted != 0) return;
+    const auto engineOwned = static_cast<int>(buffer_.composed().text.size());
+    const int overflow = result.deleteCount - engineOwned;
+    if (overflow <= 0) return;
+    const auto keep = retype_->prefix.size() > static_cast<std::size_t>(overflow)
+                          ? retype_->prefix.size() - static_cast<std::size_t>(overflow)
+                          : 0;
+    retype_->prefix.resize(keep);
+    if (retype_->prefix.empty()) retype_->partial = false;
+}
+
 bool InputPipeline::handlePopupKey(const KeyEvent& key, std::uint64_t generation) {
     const int count = static_cast<int>(popup_.items.size());
     switch (key.key) {
     case VirtualKey::Tab:
+        selectSuggestion(static_cast<std::size_t>(popup_.selected), generation);
+        return true;
     case VirtualKey::Enter:
+        // Enter belongs to the application unless the user asked for it: in a chat window
+        // it sends the message, and a swallowed Enter is a message that never went.
+        if (!selectWithEnter_.load(std::memory_order_acquire)) return false;
         selectSuggestion(static_cast<std::size_t>(popup_.selected), generation);
         return true;
     case VirtualKey::ArrowDown:
@@ -184,8 +245,17 @@ bool InputPipeline::handlePopupKey(const KeyEvent& key, std::uint64_t generation
         clearPending();
         return true;
     default:
-        return false;
+        break;
     }
+    if (selectWithDigits_.load(std::memory_order_acquire) && key.isDigit() &&
+        !has(key.modifiers, Modifier::Shift)) {
+        const int digit = static_cast<int>(key.key) - static_cast<int>(VirtualKey::Digit0);
+        if (digit >= 1 && digit <= count) {
+            selectSuggestion(static_cast<std::size_t>(digit - 1), generation);
+            return true;
+        }
+    }
+    return false;
 }
 
 bool InputPipeline::applyEngineResult(const EngineResult& result, std::uint64_t generation) {
@@ -218,7 +288,8 @@ void InputPipeline::commitSyllable(const std::u32string& composed, bool transfor
 
     window_.commit(Syllable::fromComposed(text));
     spans_.push_back({static_cast<int>(text.size()), terminator != 0 ? 1 : 0, terminator,
-                      terminator != 0 ? std::u32string(1, terminator) : std::u32string()});
+                      terminator != 0 ? std::u32string(1, terminator) : std::u32string(),
+                      transformApplied});
     trimSpans();
     ++stats_.commits;
     lastCommitMs_ = deps_.clock.nowMonotonicMs();
@@ -271,6 +342,8 @@ void InputPipeline::commitSyllable(const std::u32string& composed, bool transfor
     }
     event.terminator = terminator;
     event.vietnameseTransformApplied = transformApplied;
+    event.restoredFrom = std::move(restoredFrom_);
+    restoredFrom_.clear();
     if (const auto focus = deps_.focus.current()) {
         event.focus = *focus;
     }
@@ -482,11 +555,27 @@ void InputPipeline::onBackspaceIntoCommitted() {
             retype_->syllablesRemoved = n - i;
             return;
         }
+        if (rest < span.trailing) {
+            // Only separator characters went and at least one is left: the syllable is
+            // still finished and still separated from whatever comes next. There is
+            // nothing to retype - put the window back and forget the deletion, or the
+            // next word would be glued onto this one ("chào" + "bạn" -> "chàobạn").
+            window_.committed.assign(retype_->window.begin(),
+                                     retype_->window.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+            spans_.assign(retype_->spans.begin(),
+                          retype_->spans.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+            Span& last = spans_.back();
+            last.trailing -= rest;
+            last.separator.resize(static_cast<std::size_t>(last.trailing));
+            abandonRetype();
+            return;
+        }
         if (rest < total) {
             const int intoTyped = std::max(0, rest - span.trailing);
             const auto& typed = retype_->window[static_cast<std::size_t>(i)].typed;
             retype_->partial = true;
             retype_->prefix = typed.substr(0, typed.size() - static_cast<std::size_t>(intoTyped));
+            retype_->prefixTransformApplied = span.transformApplied;
             retype_->syllablesRemoved = n - i; // this one will be retyped from `prefix`
             return;
         }
@@ -536,6 +625,9 @@ bool InputPipeline::tryUndoCorrection(const KeyEvent& key, std::uint64_t generat
         const std::size_t last = (recentNext_ + recent_.size() - 1) % recent_.size();
         if (recent_[last].corrected == c.insertedText) recent_[last].undone = true;
     }
+    // The engine still holds the raw keys of the word we just rewrote. Left there, the
+    // next word break would "restore" them over text that no longer exists.
+    deps_.engine.reset();
     lastCorrection_.reset();
     hidePopup();
     clearPending();
@@ -611,6 +703,9 @@ bool InputPipeline::applyCorrection(const Correction& correction) {
         recentNext_ = (recentNext_ + 1) % recent_.size();
     }
     lastCorrection_ = std::move(applied);
+    // The engine still holds the raw keys of the word we just rewrote. Left there, the
+    // next word break would "restore" them over text that no longer exists.
+    deps_.engine.reset();
     abandonRetype();
     hidePopup();
     clearPending();
@@ -643,6 +738,9 @@ bool InputPipeline::applyReplacement(const TextReplacement& replacement) {
     }
     deps_.sink.apply(replacement);
     ++stats_.replacementsApplied;
+    // The engine still holds the raw keys of the word we just rewrote. Left there, the
+    // next word break would "restore" them over text that no longer exists.
+    deps_.engine.reset();
     // The screen changed under us; anything else computed against the old generation is
     // now stale too.
     buffer_.bump();

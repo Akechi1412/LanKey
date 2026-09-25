@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cctype>
+#include <cstring>
 #include <string>
 #include <string_view>
 
@@ -87,6 +88,10 @@ public:
         } else {
             ev.key = VirtualKey::Punctuation;
             ev.unicode = static_cast<char32_t>(uc);
+            // Shifted symbols of the US layout carry Shift, as the hook reports them.
+            if (std::strchr("~!@#$%^&*()_+{}|:\"<>?", c) != nullptr) {
+                ev.modifiers = Modifier::Shift;
+            }
         }
         return ev;
     }

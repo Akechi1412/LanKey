@@ -170,7 +170,15 @@ TEST_F(AutoCorrectEngineTest, FrequentWordBeatsACloserRareOne) {
 
 TEST_F(AutoCorrectEngineTest, ATonedTypoPrefersTonedCandidates) {
     // "dduowngr": wrong tone key. "đường" and "đương" are both 0.4 away; the user pressed a
-    // tone key, so the toneless "đương" is not what they meant.
+    // tone key, so the toneless "đương" is not what they meant, and the tone-mismatch
+    // penalty puts it behind.
+    //
+    // That penalty is the ONLY thing separating the two, so the winner leads by exactly
+    // the penalty. For a word this user has never written that is not a clear enough lead
+    // to overwrite what they typed (margin rule, ADR 011): with no history the syllable is
+    // left alone, and one use of "đường" is enough to settle it.
+    EXPECT_FALSE(engine.check(committed({U"đưởng"})).has_value());
+    publish({entry(U"đường", 3)}, {}, {});
     const auto c = engine.check(committed({U"đưởng"}));
     ASSERT_TRUE(c.has_value());
     EXPECT_EQ(c->corrected[0].text, U"đường");

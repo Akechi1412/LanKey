@@ -98,6 +98,7 @@ void DataDialog::show(HINSTANCE instance, const std::wstring& text, Callbacks ca
                                 (work.left + work.right - w) / 2, (work.top + work.bottom - h) / 2,
                                 w, h, nullptr, nullptr, instance, this);
         if (hwnd_ == nullptr) return;
+        setWindowIcons(hwnd_, instance);
         font_ = createUiFont(dpi, 10, FW_NORMAL);
         text_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY |
@@ -106,7 +107,7 @@ void DataDialog::show(HINSTANCE instance, const std::wstring& text, Callbacks ca
         openFolder_ = CreateWindowExW(
             0, L"BUTTON", L"Mở thư mục dữ liệu", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
             0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(kIdOpenFolder), instance, nullptr);
-        erase_ = CreateWindowExW(0, L"BUTTON", L"Xoá toàn bộ dữ liệu...",
+        erase_ = CreateWindowExW(0, L"BUTTON", L"Xoá toàn bộ dữ liệu",
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON, 0, 0, 0, 0,
                                  hwnd_, reinterpret_cast<HMENU>(kIdErase), instance, nullptr);
         close_ = CreateWindowExW(0, L"BUTTON", L"Đóng",
@@ -161,6 +162,26 @@ LRESULT CALLBACK DataDialog::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
 LRESULT DataDialog::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_DPICHANGED: {
+        const UINT dpi = HIWORD(wParam);
+        if (font_ != nullptr) DeleteObject(font_);
+        font_ = createUiFont(dpi, 10, FW_NORMAL);
+        for (const HWND child : {text_, openFolder_, erase_, close_}) {
+            SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font_), TRUE);
+        }
+        const auto* r = reinterpret_cast<const RECT*>(lParam);
+        SetWindowPos(hwnd_, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
+                     SWP_NOZORDER | SWP_NOACTIVATE);
+        layout();
+        return 0;
+    }
+    case WM_SETCURSOR:
+        if (const auto over = reinterpret_cast<HWND>(wParam);
+            over == openFolder_ || over == erase_ || over == close_) {
+            showHandCursor();
+            return TRUE;
+        }
+        break;
     case WM_SIZE:
         if (text_ != nullptr) layout();
         return 0;

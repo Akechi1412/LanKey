@@ -35,6 +35,12 @@ struct EngineResult {
     std::u32string insert;
     // Syllable state after processing this key (even for PassThrough).
     ComposedText composed;
+    // Non-empty when the engine composed a Vietnamese syllable, decided it was not a word,
+    // and is putting the raw keys back ("kh\u00f4ngg" -> "khoongg"): this is that composed
+    // form, which exists nowhere else afterwards. The only evidence of what the typist
+    // meant when a slip makes the syllable invalid - and `composed` is cleared at the same
+    // moment, so without this the smart layer sees nothing to repair.
+    std::u32string restoredFrom;
 };
 
 } // namespace lankey::core::model

@@ -44,6 +44,10 @@ public:
         if (!swallowed && key.isDown && !key.injectedBySelf) {
             if (key.key == core::model::VirtualKey::Backspace) {
                 sink.backspaceThrough();
+            } else if (key.key == core::model::VirtualKey::Enter) {
+                // The KeyEvent carries no character, but the application inserts a line
+                // break - and the tests are about what ends up on screen.
+                sink.typeThrough(U'\n');
             } else if (!key.hasSystemModifier()) {
                 sink.typeThrough(key.unicode);
             }

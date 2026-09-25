@@ -17,6 +17,10 @@ struct SyllableCommitted {
                              // focus loss. Needed to retype correctly on AutoCorrect,
                              // and to skip AutoCorrect after Enter (chat apps send).
     bool vietnameseTransformApplied = false;
+    // The engine composed this syllable, judged it not a Vietnamese word, and put the raw
+    // keys back; this is what it had composed. `vietnameseTransformApplied` is false in
+    // that case, so this is the only sign the typist was typing Vietnamese at all.
+    std::u32string restoredFrom;
     FocusContext focus;
     std::int64_t timestampMs = 0;
     std::uint64_t generation = 0; // InputBuffer generation AFTER the terminator

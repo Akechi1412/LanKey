@@ -83,6 +83,15 @@ struct Factory<ProtectedSqliteStore> {
         }
         lk::expected<void> eraseAll() override { return store->eraseAll(); }
         lk::expected<int> cleanup(std::int64_t now) override { return store->cleanup(now); }
+        lk::expected<void> removeEntries(const std::vector<std::u32string>& p) override {
+            return store->removeEntries(p);
+        }
+        lk::expected<void> setBlocked(const std::vector<std::u32string>& p, bool b) override {
+            return store->setBlocked(p, b);
+        }
+        lk::expected<void> setPinned(const std::vector<std::u32string>& p, bool b) override {
+            return store->setPinned(p, b);
+        }
         lk::expected<std::vector<model::CorrectionRule>> loadCorrections() override {
             return store->loadCorrections();
         }
@@ -180,6 +189,28 @@ TYPED_TEST(LexiconStoreContract, EraseAllLeavesNothing) {
     EXPECT_EQ(this->store->loadAll()->size(), 1u);
 }
 
+// -- Dictionary editing ---------------------------------------------------------------------
+
+TYPED_TEST(LexiconStoreContract, RemoveBlockAndPinEntries) {
+    ASSERT_TRUE(
+        this->store
+            ->applyDeltas(
+                {{phrase({U"a"}), 1, 1}, {phrase({U"b"}), 1, 1}, {phrase({U"c", U"d"}), 1, 1}})
+            .has_value());
+    ASSERT_TRUE(this->store->removeEntries({U"a", U"không có"}).has_value());
+    EXPECT_EQ(find(*this->store->loadAll(), U"a"), nullptr);
+    ASSERT_TRUE(this->store->setBlocked({U"b"}, true).has_value());
+    ASSERT_TRUE(this->store->setPinned({U"c d"}, true).has_value());
+    const auto all = this->store->loadAll();
+    ASSERT_TRUE(all.has_value());
+    EXPECT_EQ(all->size(), 2u);
+    EXPECT_TRUE(find(*all, U"b")->blocked);
+    EXPECT_TRUE(find(*all, U"c d")->pinned);
+    ASSERT_TRUE(this->store->setBlocked({U"b"}, false).has_value());
+    EXPECT_FALSE(find(*this->store->loadAll(), U"b")->blocked);
+    EXPECT_TRUE(this->store->removeEntries({}).has_value()); // empty batch is a no-op
+}
+
 // -- correction_map / blacklist ---------------------------------------------------------------
 
 using model::CorrectionRule;
@@ -223,7 +254,11 @@ TYPED_TEST(LexiconStoreContract, ReinforceWithNewTargetStartsOver) {
         this->store
             ->reinforceCorrection(U"chuơng", U"chướng", 0.2, CorrectionRuleSource::Learned, 2)
             .has_value());
-    const auto* r = rule(*this->store->loadCorrections(), U"chuơng");
+    // Keep the vector alive: rule() returns a pointer into it, and `*expected` on a
+    // temporary would leave that pointer dangling.
+    const auto all = this->store->loadCorrections();
+    ASSERT_TRUE(all.has_value());
+    const auto* r = rule(*all, U"chuơng");
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->correct, U"chướng");
     EXPECT_DOUBLE_EQ(r->confidence, 0.2);
@@ -237,7 +272,9 @@ TYPED_TEST(LexiconStoreContract, RejectLowersConfidenceAndBlacklistsAtThreshold)
     ASSERT_TRUE(first.has_value());
     EXPECT_FALSE(*first);
     {
-        const auto* r = rule(*this->store->loadCorrections(), U"sữa");
+        const auto all = this->store->loadCorrections();
+        ASSERT_TRUE(all.has_value());
+        const auto* r = rule(*all, U"sữa");
         ASSERT_NE(r, nullptr);
         EXPECT_NEAR(r->confidence, 0.5, 1e-9);
         EXPECT_EQ(r->timesRejected, 1);
@@ -267,7 +304,9 @@ TYPED_TEST(LexiconStoreContract, ManualBlacklistAndAppliedCounter) {
                     .has_value());
     ASSERT_TRUE(this->store->noteCorrectionApplied(U"a").has_value());
     ASSERT_TRUE(this->store->noteCorrectionApplied(U"a").has_value());
-    const auto* r = rule(*this->store->loadCorrections(), U"a");
+    const auto all = this->store->loadCorrections();
+    ASSERT_TRUE(all.has_value());
+    const auto* r = rule(*all, U"a");
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->timesApplied, 2);
     EXPECT_EQ(r->source, CorrectionRuleSource::User);

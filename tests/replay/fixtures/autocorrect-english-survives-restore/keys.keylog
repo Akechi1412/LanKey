@@ -1,0 +1,5 @@
+# The same restore path turns English "text" into "tẽt" before putting the keys back.
+# Salvaging that composed form must never make AutoCorrect rewrite English: the user has
+# no history for any Vietnamese word near it.
+{"autocorrect":"aggressive"}
+{"text":"text with git "}

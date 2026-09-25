@@ -1,5 +1,6 @@
 #include "ui/win32/LanguageToast.h"
 
+#include <algorithm>
 #include <shellscalingapi.h>
 
 namespace lankey::ui::win32 {
@@ -11,6 +12,7 @@ constexpr UINT_PTR kHideTimer = 1;
 constexpr int kVisibleMs = 1400;
 // Layout in 96-dpi pixels.
 constexpr int kWidth = 232;
+constexpr int kMaxWidth = 440;
 constexpr int kHeight = 56;
 constexpr int kPadding = 14;
 constexpr int kTile = 28;
@@ -25,7 +27,15 @@ LanguageToast::~LanguageToast() {
 }
 
 void LanguageToast::show(HINSTANCE instance, bool vietnamese) {
-    vietnamese_ = vietnamese;
+    showText(instance, vietnamese ? L"V" : L"E", vietnamese ? kBrandVietnamese : kBrandEnglish,
+             vietnamese ? L"Tiếng Việt" : L"English");
+}
+
+void LanguageToast::showText(HINSTANCE instance, const std::wstring& tile, COLORREF tileColour,
+                             const std::wstring& text) {
+    tile_ = tile;
+    tileColour_ = tileColour;
+    text_ = text;
     if (hwnd_ == nullptr) {
         WNDCLASSW wc{};
         wc.style = CS_DROPSHADOW;
@@ -77,7 +87,18 @@ void LanguageToast::place() {
         font_ = createUiFont(dpi, kFontPt, FW_NORMAL);
         fontDpi_ = dpi;
     }
-    const int w = px(kWidth);
+    // Wide enough for the text: kWidth is the minimum (the language toast), longer
+    // messages ("Hãy bôi đen văn bản trước") grow the card up to kMaxWidth.
+    int w = px(kWidth);
+    if (const HDC dc = GetDC(hwnd_); dc != nullptr) {
+        const auto old = static_cast<HFONT>(SelectObject(dc, font_));
+        SIZE size{};
+        GetTextExtentPoint32W(dc, text_.c_str(), static_cast<int>(text_.size()), &size);
+        SelectObject(dc, old);
+        ReleaseDC(hwnd_, dc);
+        const int needed = px(kPadding) * 3 + px(kTile) + size.cx;
+        w = std::clamp(needed, px(kWidth), px(kMaxWidth));
+    }
     const int h = px(kHeight);
     SetWindowPos(hwnd_, HWND_TOPMOST, work.right - w - px(kMarginFromEdge),
                  work.bottom - h - px(kMarginFromEdge), w, h, SWP_NOACTIVATE | SWP_NOOWNERZORDER);
@@ -99,7 +120,7 @@ void LanguageToast::paint() {
     const int tile = px(kTile);
     const int top = (client.bottom - tile) / 2;
     const RECT tileRect{px(kPadding), top, px(kPadding) + tile, top + tile};
-    const HBRUSH fill = CreateSolidBrush(vietnamese_ ? kBrandVietnamese : kBrandEnglish);
+    const HBRUSH fill = CreateSolidBrush(tileColour_);
     const HPEN noPen = static_cast<HPEN>(GetStockObject(NULL_PEN));
     const auto oldBrush = SelectObject(dc, fill);
     const auto oldPen = SelectObject(dc, noPen);
@@ -110,12 +131,11 @@ void LanguageToast::paint() {
     DeleteObject(fill);
 
     SetBkMode(dc, TRANSPARENT);
-    const HFONT bold = createUiFont(dpi, 12, FW_BOLD);
+    const HFONT bold = createUiFont(dpi, tile_.size() > 1 ? 10 : 12, FW_BOLD);
     const auto oldFont = static_cast<HFONT>(SelectObject(dc, bold));
     SetTextColor(dc, RGB(0xFF, 0xFF, 0xFF));
     RECT letter = tileRect;
-    DrawTextW(dc, vietnamese_ ? L"V" : L"E", 1, &letter,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    DrawTextW(dc, tile_.c_str(), -1, &letter, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(dc, oldFont);
     DeleteObject(bold);
 
@@ -123,7 +143,7 @@ void LanguageToast::paint() {
     RECT text{tileRect.right + px(kPadding), client.top, client.right - px(kPadding),
               client.bottom};
     SetTextColor(dc, kPopupPalette.text);
-    DrawTextW(dc, vietnamese_ ? L"Tiếng Việt" : L"English", -1, &text,
+    DrawTextW(dc, text_.c_str(), -1, &text,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
     EndPaint(hwnd_, &ps);
 }

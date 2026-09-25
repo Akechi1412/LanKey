@@ -136,6 +136,27 @@ TEST_F(SuggestTest, PredictionUsesTwoWordsOfContextFirst) {
 
 // -- selection -------------------------------------------------------------------------
 
+TEST_F(SuggestTest, DigitsSelectOnlyWhenEnabled) {
+    rig.type("he ");
+    rig.settle();
+    ASSERT_TRUE(showing());
+    KeyEvent two = named(VirtualKey::Digit2);
+    two.unicode = U'2';
+    EXPECT_FALSE(rig.press(two)); // off by default: the digit is typed
+    EXPECT_EQ(rig.screen(), U"he 2");
+
+    rig.pipeline().setSelectWithDigits(true);
+    rig.type("\b");
+    rig.type("he ");
+    rig.settle();
+    ASSERT_TRUE(showing());
+    const auto items = rig.pipeline().popup().items;
+    ASSERT_GE(items.size(), 2u);
+    EXPECT_TRUE(rig.press(two));
+    EXPECT_EQ(rig.selections.size(), 1u);
+    EXPECT_EQ(rig.selections[0].joined(), items[1].phrase.joined());
+}
+
 TEST_F(SuggestTest, TabSelectsInsertsWithTrailingSpaceAndChains) {
     rig.type("he ");
     rig.settle();
@@ -188,7 +209,22 @@ TEST_F(SuggestTest, ArrowsMoveSelectionAndTabPicksIt) {
     EXPECT_EQ(rig.screen(), expected + U" ");
 }
 
-TEST_F(SuggestTest, EnterSelectsLikeTabWhileShown) {
+TEST_F(SuggestTest, EnterGoesToTheApplicationUnlessTheUserAsksForIt) {
+    // Enter sends the message in a chat window and submits a form. Taking it to accept a
+    // suggestion would cost the user the message, so it is off until asked for.
+    rig.type("chu");
+    rig.settle();
+    ASSERT_TRUE(showing());
+    EXPECT_FALSE(rig.press(named(VirtualKey::Enter)));
+    EXPECT_TRUE(rig.selections.empty());
+    EXPECT_EQ(rig.screen(), U"chu\n");
+    // Enter still ends the phrase: the popup is gone and nothing carries over.
+    EXPECT_FALSE(showing());
+    EXPECT_FALSE(pending());
+}
+
+TEST_F(SuggestTest, EnterSelectsLikeTabOnceEnabled) {
+    rig.pipeline().setSelectWithEnter(true);
     rig.type("chu");
     rig.settle();
     ASSERT_TRUE(showing());
@@ -197,6 +233,14 @@ TEST_F(SuggestTest, EnterSelectsLikeTabWhileShown) {
     EXPECT_EQ(rig.screen(), U"chuong trinh ");
     // Without a popup, Enter is just Enter.
     EXPECT_FALSE(rig.press(named(VirtualKey::Enter)));
+}
+
+TEST_F(SuggestTest, EnterKeyUpIsSwallowedTooWhenItSelected) {
+    rig.pipeline().setSelectWithEnter(true);
+    rig.type("chu");
+    rig.settle();
+    EXPECT_TRUE(rig.press(named(VirtualKey::Enter)));
+    EXPECT_TRUE(rig.press(release(VirtualKey::Enter)));
 }
 
 TEST_F(SuggestTest, EscapeDismissesUntilSyllableEnds) {

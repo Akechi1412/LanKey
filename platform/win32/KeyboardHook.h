@@ -33,6 +33,10 @@ public:
         std::atomic<std::uint64_t> reinstalls{0};
         std::atomic<std::uint64_t> exceptions{0};
         std::atomic<std::uint32_t> maxCallbackMicros{0};
+        // How long the hook had been silent when the watchdog last reinstalled it. A few
+        // seconds over the threshold is a real death; a very large value means the gap was
+        // something else the watchdog should have ignored.
+        std::atomic<std::uint64_t> lastDeadGapMs{0};
     };
 
     KeyboardHook();
@@ -65,7 +69,10 @@ private:
     bool installHooks();
     void removeHooks();
     [[nodiscard]] bool onKey(WPARAM message, const KBDLLHOOKSTRUCT& k) noexcept;
-    [[nodiscard]] core::model::KeyEvent translate(WPARAM message, const KBDLLHOOKSTRUCT& k) const;
+    [[nodiscard]] core::model::KeyEvent translate(WPARAM message, const KBDLLHOOKSTRUCT& k);
+    void trackModifier(WPARAM message, DWORD vk) noexcept;
+    void reconcileModifiers(DWORD vk) noexcept;
+    static core::model::Modifier modifierFor(DWORD vk) noexcept;
 
     static KeyboardHook* instance_;
 
@@ -79,6 +86,11 @@ private:
     HHOOK mouseHook_ = nullptr;
     std::atomic<ULONGLONG> lastKeyboardTick_{0};
     std::atomic<ULONGLONG> lastMouseTick_{0};
+    // Modifiers seen going down in this hook and not yet seen going up. GetAsyncKeyState
+    // lags for injected input (SendInput from another process is delivered to low-level
+    // hooks before the key state is updated), so a synthetic Ctrl+C would otherwise look
+    // like a plain "c" here and be re-typed as text by the engine. Hook thread only.
+    core::model::Modifier trackedModifiers_ = core::model::Modifier::None;
     std::mutex tasksMutex_;
     std::deque<std::function<void()>> tasks_;
     Stats stats_;

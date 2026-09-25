@@ -33,6 +33,16 @@ Cụm ít dùng tự bị xoá sau 45–180 ngày không dùng; tổng số cụ
 
 LanKey không có mã kết nối mạng. Không gửi, không đồng bộ, không thống kê sử dụng, không kiểm tra cập nhật. Bạn có thể tự kiểm chứng trong mã nguồn (giấy phép GPL-3.0).
 
+## Clipboard khi dùng phím tắt biến đổi vùng bôi đen
+
+Phím tắt chuyển đổi vùng bôi đen (ví dụ `Ctrl+Alt+F`) hoạt động bằng cách gửi Ctrl+C, đọc văn bản
+vừa chép, biến đổi rồi gửi Ctrl+V — cách duy nhất chạy được với mọi ứng dụng. LanKey **khôi phục
+clipboard của bạn ngay sau đó** và đánh dấu nội dung tạm bằng cờ chuẩn của Windows
+(`ExcludeClipboardContentFromMonitorProcessing`) để lịch sử clipboard của Windows (Win+V) không ghi
+lại. Văn bản đó chỉ nằm trong bộ nhớ trong khoảnh khắc biến đổi, không được lưu xuống đĩa và không
+đi vào từ điển học. Nếu không có gì được bôi đen, LanKey không chạm vào clipboard. Một hạn chế:
+clipboard đang chứa ảnh hoặc tệp (không phải văn bản) không khôi phục lại được.
+
 ## Xoá dữ liệu
 
 - Menu biểu tượng khay → **Xoá toàn bộ dữ liệu đã học**: xoá sạch cụm từ, cụm tự sửa và danh sách cấm sửa, ghi đè tệp ngay lập tức.

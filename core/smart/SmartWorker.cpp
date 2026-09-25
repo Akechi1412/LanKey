@@ -86,6 +86,10 @@ void SmartWorker::eraseAllData(std::function<void(lk::expected<void>)> done) {
     });
 }
 
+void SmartWorker::withStore(std::function<void(ILexiconStore&)> work) {
+    db_.post([this, work = std::move(work)] { work(deps_.store); });
+}
+
 void SmartWorker::requestRebuild() {
     rebuildRequested_.store(true);
     signal_.release();

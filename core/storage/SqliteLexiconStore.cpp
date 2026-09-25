@@ -450,6 +450,49 @@ lk::expected<int> SqliteLexiconStore::cleanup(std::int64_t nowUnixSeconds) {
     return removed;
 }
 
+lk::expected<void> SqliteLexiconStore::forEachPhrase(const char* sql,
+                                                     const std::vector<std::u32string>& phrases,
+                                                     int flagValue) {
+    if (phrases.empty()) return {};
+    Statement st(db_, sql);
+    if (!st.ok()) return lk::unexpected(lastError("edit prepare"));
+    if (auto r = exec("BEGIN IMMEDIATE"); !r) return r;
+    for (const auto& p : phrases) {
+        // Statements take (?1 = phrase) or (?1 = flag, ?2 = phrase); binding an unused
+        // index is harmless.
+        if (flagValue >= 0) {
+            sqlite3_bind_int(st.get(), 1, flagValue);
+            bindText(st.get(), 2, text::toUtf8(p));
+        } else {
+            bindText(st.get(), 1, text::toUtf8(p));
+        }
+        if (st.step() != SQLITE_DONE) {
+            const Error e = lastError("edit step");
+            (void)exec("ROLLBACK");
+            return lk::unexpected(e);
+        }
+        st.reset();
+    }
+    if (auto r = exec("COMMIT"); !r) return r;
+    return persist();
+}
+
+lk::expected<void> SqliteLexiconStore::removeEntries(const std::vector<std::u32string>& phrases) {
+    return forEachPhrase("DELETE FROM user_lexicon WHERE phrase = ?", phrases, -1);
+}
+
+lk::expected<void> SqliteLexiconStore::setBlocked(const std::vector<std::u32string>& phrases,
+                                                  bool blocked) {
+    return forEachPhrase("UPDATE user_lexicon SET is_blocked = ? WHERE phrase = ?", phrases,
+                         blocked ? 1 : 0);
+}
+
+lk::expected<void> SqliteLexiconStore::setPinned(const std::vector<std::u32string>& phrases,
+                                                 bool pinned) {
+    return forEachPhrase("UPDATE user_lexicon SET is_pinned = ? WHERE phrase = ?", phrases,
+                         pinned ? 1 : 0);
+}
+
 lk::expected<std::vector<model::CorrectionRule>> SqliteLexiconStore::loadCorrections() {
     Statement st(db_, "SELECT wrong_phrase, correct_phrase, confidence, times_applied, "
                       "times_rejected, source, updated_at FROM correction_map");

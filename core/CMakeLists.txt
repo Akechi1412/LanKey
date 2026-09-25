@@ -32,6 +32,7 @@ add_library(lankey_core STATIC
     text/VietnameseText.cpp
     text/VietnameseDistance.cpp
     text/Utf.cpp
+    text/WidthConverter.cpp
     model/Phrase.cpp
     pipeline/WordBoundaryDetector.cpp
     pipeline/InputPipeline.cpp

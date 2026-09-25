@@ -26,8 +26,9 @@
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_CXX_COMPILER": "clang++",
-        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
-        "VCPKG_HOST_TRIPLET": "x64-mingw-static"
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/triplets",
+        "VCPKG_TARGET_TRIPLET": "x64-llvm-mingw-static",
+        "VCPKG_HOST_TRIPLET": "x64-llvm-mingw-static"
       },
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
     },

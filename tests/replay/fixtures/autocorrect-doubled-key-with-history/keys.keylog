@@ -1,0 +1,7 @@
+# A bounced key makes the syllable invalid, so the engine puts the raw keys back
+# ("khoongg"). The composed form it gave up on is the only evidence of what was meant;
+# with the word in the user's own history it is safe to act on. Before 2026-09-25 that
+# evidence was thrown away and nothing here could be fixed.
+{"lexicon":[["không",5]]}
+{"autocorrect":"balanced"}
+{"text":"khoongg "}

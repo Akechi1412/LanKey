@@ -45,6 +45,12 @@ public:
     // Housekeeping (PLAN 5.6): drop stale low-frequency entries, enforce the hard limit,
     // then VACUUM. Returns the number of rows removed.
     [[nodiscard]] lk::expected<int> cleanup(std::int64_t nowUnixSeconds) override;
+    [[nodiscard]] lk::expected<void>
+    removeEntries(const std::vector<std::u32string>& phrases) override;
+    [[nodiscard]] lk::expected<void> setBlocked(const std::vector<std::u32string>& phrases,
+                                                bool blocked) override;
+    [[nodiscard]] lk::expected<void> setPinned(const std::vector<std::u32string>& phrases,
+                                               bool pinned) override;
     [[nodiscard]] lk::expected<std::vector<model::CorrectionRule>> loadCorrections() override;
     [[nodiscard]] lk::expected<std::vector<std::u32string>> loadBlacklist() override;
     [[nodiscard]] lk::expected<void> reinforceCorrection(std::u32string_view wrong,
@@ -66,6 +72,8 @@ public:
     [[nodiscard]] lk::expected<void> persist();
 
 private:
+    [[nodiscard]] lk::expected<void>
+    forEachPhrase(const char* sql, const std::vector<std::u32string>& phrases, int flagValue);
     [[nodiscard]] lk::expected<void> exec(const char* sql) const;
     [[nodiscard]] lk::expected<void> migrate();
     [[nodiscard]] lk::expected<void> openProtected();

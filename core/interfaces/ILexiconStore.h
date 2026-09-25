@@ -29,6 +29,16 @@ public:
     // Returns how many rows were removed.
     [[nodiscard]] virtual lk::expected<int> cleanup(std::int64_t nowUnixSeconds) = 0;
 
+    // -- Dictionary editing (Settings) ----------------------------------------------------------
+    [[nodiscard]] virtual lk::expected<void>
+    removeEntries(const std::vector<std::u32string>& phrases) = 0;
+    // Blocked entries are kept (so they are not re-learned from scratch) but never suggested.
+    [[nodiscard]] virtual lk::expected<void> setBlocked(const std::vector<std::u32string>& phrases,
+                                                        bool blocked) = 0;
+    // Pinned entries are never aged out by cleanup().
+    [[nodiscard]] virtual lk::expected<void> setPinned(const std::vector<std::u32string>& phrases,
+                                                       bool pinned) = 0;
+
     // -- correction_map / autocorrect_blacklist (F2) --------------------------------------
     [[nodiscard]] virtual lk::expected<std::vector<model::CorrectionRule>> loadCorrections() = 0;
     [[nodiscard]] virtual lk::expected<std::vector<std::u32string>> loadBlacklist() = 0;

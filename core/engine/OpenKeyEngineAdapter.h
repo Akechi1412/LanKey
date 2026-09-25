@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 #include "core/interfaces/IVietnameseEngine.h"
 
@@ -38,6 +40,7 @@ private:
     model::EngineSettings settings_;
     // Mirror of what the application shows for the syllable being composed.
     std::u32string onScreen_;
+    std::vector<std::uint8_t> widths_; // on-screen code units per engine character
     bool transformApplied_ = false;
 };
 

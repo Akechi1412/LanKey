@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <string_view>
 
 #include "core/model/Thresholds.h"
@@ -23,7 +24,17 @@ constexpr std::size_t kMaxRuleSyllables = 3;  // correction_map keys are 1..3 sy
 constexpr double kFrequencyBonusScaled = 2.0; // 0.4 in distance units per doubling of use
 constexpr double kToneMismatchScaled = 2.0;   // candidate has a tone iff the typo has one
 constexpr double kDominanceRatio = 1.5;       // trusted unless a neighbour is typed 1.5x more
-constexpr double kScoreEpsilon = 1e-9;
+// How far ahead the winner must be before its word replaces what the user typed, in the
+// same scaled units as the distance (5 = one whole edit, 2 = one tone/modifier slip).
+//
+// Two values, because the two signals are independent: how close the candidate is, and
+// whether this user actually writes it. A word the user has written before is evidence
+// the distance metric does not have, so it needs less of a lead; a word known only to the
+// closed dictionary has to be far clearer than its rivals before it may overwrite what
+// somebody typed on purpose. Measured 2026-09-25 (see ADR 011): a single value forced a
+// choice between protecting new users and helping experienced ones; two values do not.
+constexpr double kMarginKnownScaled = 1.0;   // the user writes this word
+constexpr double kMarginUnknownScaled = 3.0; // only the dictionary knows it
 
 // "ABC", "OK": constants and codes, never a Vietnamese typo.
 bool isAllCaps(std::u32string_view typed) noexcept {
@@ -183,20 +194,35 @@ std::optional<Correction> AutoCorrectEngine::check(const SyllableCommitted& comm
 
     // 3. No Vietnamese transform on this syllable: English, a name, a command. The base
     // dictionary is closed, so "with" and "git" would otherwise both be "typos".
-    if (!committed.vietnameseTransformApplied) return std::nullopt;
+    //
+    // One exception: the engine composed a Vietnamese syllable, found it was not a word,
+    // and put the raw keys back. A doubled or mistyped key does exactly that, and the
+    // composed form ("kh\u00f4ngg") is the only evidence of what the typist meant - the raw
+    // keys on screen ("khoongg") are not a syllable and nothing can be done with them.
+    //
+    // The same path also turns English "text" into "t\u1ebdt" before restoring it, so this
+    // evidence is worth far less than an ordinary syllable: a candidate is accepted only
+    // when THIS USER has written it before. Measured 2026-09-25, corrections backed by the
+    // user's own history are the ones that do not misfire (harmful 0-0.3%), while the base
+    // dictionary alone reaches 6.6% harmful on keystroke slips.
+    const bool fromRestore = !committed.vietnameseTransformApplied &&
+                             !committed.restoredFrom.empty() &&
+                             text::isAllLetters(committed.restoredFrom);
+    if (!committed.vietnameseTransformApplied && !fromRestore) return std::nullopt;
+    const std::u32string& subject = fromRestore ? committed.restoredFrom : s.text;
     // 4. A real syllable.
-    if (base->syllables->contains(s.text)) return std::nullopt;
+    if (base->syllables->contains(subject)) return std::nullopt;
     // 5. A guess the user rejected recently.
-    if (snap && snap->suppressed.contains(s.text)) return std::nullopt;
+    if (snap && snap->suppressed.contains(subject)) return std::nullopt;
 
     // 6. Fuzzy: one clear best candidate within the level's reach, or nothing.
     const int maxDistance = maxDistanceScaled(settings->level);
     if (maxDistance < 0) return std::nullopt;
     static thread_local std::vector<FuzzyIndex::Match> matches;
     static thread_local std::vector<FuzzyIndex::Match> personal;
-    base->tree.search(s.text, maxDistance, matches);
+    base->tree.search(subject, maxDistance, matches);
     if (snap) {
-        snap->personal.search(s.text, maxDistance, personal);
+        snap->personal.search(subject, maxDistance, personal);
         matches.insert(matches.end(), personal.begin(), personal.end());
     }
     // The syllable itself may sit in the personal index (trusted): it is not a candidate.
@@ -205,8 +231,8 @@ std::optional<Correction> AutoCorrectEngine::check(const SyllableCommitted& comm
 
     // 5b. Something this user types often enough that we believe them - unless a word a
     // slip away is what they type far more often, which makes this the recurring typo.
-    if (snap && snap->trusted.contains(s.text)) {
-        const auto own = snap->frequency.find(s.text);
+    if (snap && snap->trusted.contains(subject)) {
+        const auto own = snap->frequency.find(subject);
         const double ownFreq = own == snap->frequency.end() ? 0.0 : own->second;
         bool dominated = false;
         for (const auto& m : matches) {
@@ -227,7 +253,7 @@ std::optional<Correction> AutoCorrectEngine::check(const SyllableCommitted& comm
     //     "đường" and "đương"; only "đường" carries a tone like the typo does. Measured on
     //     the dictionary this lifts unique fixes from 72% to 77% with no wrong pick.
     // The winner must be unique (a tie is a coin flip we refuse to make).
-    const bool typoHasTone = text::hasTone(s.text);
+    const bool typoHasTone = text::hasTone(subject);
     const auto scoreOf = [&](const FuzzyIndex::Match& m) {
         double score = static_cast<double>(m.scaledDistance);
         if (text::hasTone(m.key) != typoHasTone) score += kToneMismatchScaled;
@@ -241,23 +267,40 @@ std::optional<Correction> AutoCorrectEngine::check(const SyllableCommitted& comm
     };
     const FuzzyIndex::Match* best = nullptr;
     double bestScore = 0.0;
-    int bestCount = 0;
+    double runnerUp = std::numeric_limits<double>::infinity();
     for (const auto& m : matches) {
         const double score = scoreOf(m);
-        if (best == nullptr || score < bestScore - kScoreEpsilon) {
+        if (best == nullptr || score < bestScore) {
+            if (best != nullptr) runnerUp = bestScore;
             best = &m;
             bestScore = score;
-            bestCount = 1;
-        } else if (std::abs(score - bestScore) <= kScoreEpsilon) {
-            ++bestCount;
+        } else if (score < runnerUp) {
+            runnerUp = score;
         }
     }
-    if (best == nullptr || bestCount != 1) return std::nullopt; // ambiguous: the user decides
+    if (best == nullptr) return std::nullopt;
+    // The winner has to be clearly ahead, not merely ahead. Requiring only "no exact tie"
+    // let a candidate that beat the next one by a rounding error rewrite the user's word;
+    // measured 2026-09-25 that was 6.6% of dropped-key slips turned into the WRONG word
+    // against 0.3% turned into the right one, for a user with no typing history. When
+    // nothing else is within reach `runnerUp` stays infinite and the margin is free.
+    const auto bestFreq =
+        snap ? snap->frequency.find(std::u32string(best->key)) : decltype(snap->frequency.end()){};
+    const bool knownToUser = snap && bestFreq != snap->frequency.end() && bestFreq->second > 0;
+    if (runnerUp - bestScore < (knownToUser ? kMarginKnownScaled : kMarginUnknownScaled)) {
+        return std::nullopt;
+    }
+    if (fromRestore) {
+        // Evidence salvaged from a restore is only acted on for words this user writes.
+        const auto f = snap ? snap->frequency.find(std::u32string(best->key))
+                            : decltype(snap->frequency.end())();
+        if (!snap || f == snap->frequency.end() || f->second <= 0) return std::nullopt;
+    }
 
     Correction c;
     c.syllableCount = 1;
     c.corrected.push_back(Syllable{std::u32string(best->key), {}});
-    c.wrongKey = s.text;
+    c.wrongKey = subject;
     c.expectedGeneration = committed.generation;
     c.source = CorrectionSource::BaseDictionary;
     c.confidence = 1.0 - static_cast<double>(best->scaledDistance) /

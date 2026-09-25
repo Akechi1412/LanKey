@@ -1,6 +1,7 @@
 #include "platform/win32/CaretResolver.h"
 
 #include <objbase.h>
+#include <oleacc.h>
 #include <uiautomation.h>
 
 namespace lankey::platform::win32 {
@@ -156,6 +157,38 @@ std::optional<ScreenRect> guiThreadCaret() {
     return ScreenRect{tl.x, tl.y, (std::max)(1L, br.x - tl.x), br.y - tl.y};
 }
 
+// Microsoft Active Accessibility, the pre-UIA interface: the system caret object of the
+// focused window. Toolkits that never adopted UIA still report the caret here.
+std::optional<ScreenRect> msaaCaret() {
+    const HWND foreground = GetForegroundWindow();
+    if (foreground == nullptr) return std::nullopt;
+    GUITHREADINFO info{};
+    info.cbSize = sizeof(info);
+    HWND target = foreground;
+    if (GetGUIThreadInfo(GetWindowThreadProcessId(foreground, nullptr), &info) &&
+        info.hwndFocus != nullptr) {
+        target = info.hwndFocus;
+    }
+    IAccessible* caret = nullptr;
+    if (FAILED(AccessibleObjectFromWindow(target, static_cast<DWORD>(OBJID_CARET), IID_IAccessible,
+                                          reinterpret_cast<void**>(&caret))) ||
+        caret == nullptr) {
+        return std::nullopt;
+    }
+    VARIANT self;
+    VariantInit(&self);
+    self.vt = VT_I4;
+    self.lVal = CHILDID_SELF;
+    long left = 0;
+    long top = 0;
+    long width = 0;
+    long height = 0;
+    const HRESULT hr = caret->accLocation(&left, &top, &width, &height, self);
+    caret->Release();
+    if (FAILED(hr) || height <= 0) return std::nullopt;
+    return ScreenRect{left, top, (std::max)(1L, width), height};
+}
+
 } // namespace
 
 std::optional<ScreenRect> CaretResolver::resolve() {
@@ -163,6 +196,7 @@ std::optional<ScreenRect> CaretResolver::resolve() {
     if (auto rect = guiThreadCaret()) return rect;
     static thread_local UiaCaret uia;
     if (auto rect = uia.resolve()) return rect;
+    if (auto rect = msaaCaret()) return rect;
     // Unknown. Deliberately NOT the mouse: the popup must relate to where text goes, and
     // the mouse is usually somewhere else entirely. The UI falls back to a fixed corner.
     return std::nullopt;

@@ -17,6 +17,7 @@
 | # | File | Why |
 |---|---|---|
 | 001 | `DataType.h`, `Engine.cpp` | `OPENKEY_PORTABLE_KEYCODES` selects the platform-neutral key table (`platforms/linux.h`) without pulling in `<windows.h>`. Upstream `DataType.h` does `using namespace std;` before including `<windows.h>`, which makes `byte` ambiguous under C++17+ and, more importantly, ties the engine to Win32. |
+| 002 | `DataType.h`, `Engine.cpp` | User-defined input method: a fifth `vInputType` (`vCustom`) with its own key table: `CUSTOM_FUNCTION_COUNT` (13) functions - the eleven `ProcessingChar` positions plus standalone ơ and ư (Shift for capitals) - each with up to `CUSTOM_KEYS_PER_FUNCTION` (4) key codes, set with `vSetCustomKeys()`. The key tests (`IS_KEY_*`, `IS_MARK_KEY`) and the đ-after-consonant rule read that table instead of hard-coding the Telex letters; the â/ô/ê/horn keys map onto the Telex letters the vowel tables are keyed by (a shared key, VNI-style `6` for â and ô, is resolved by the last vowel typed); a punctuation key given a function is not a word break; the Telex `[`/`]` standalone-letter shortcut is replaced by the two standalone functions, and the horn key typed alone gives ư like Telex `w`. |
 
 ## Known upstream traits the adapter must hide
 

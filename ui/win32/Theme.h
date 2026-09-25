@@ -37,6 +37,35 @@ inline constexpr Palette kPopupPalette{
 // 72 dpi; scaled to `dpi`. Caller owns the HFONT.
 [[nodiscard]] HFONT createUiFont(UINT dpi, int pointSize, int weight);
 
+// The product logo (app/lankey.ico, resource id 1) at `size` px, or nullptr when the
+// running module carries no such resource (tests, rigs). Shared handle: do not destroy.
+[[nodiscard]] HICON logoIcon(HINSTANCE instance, int size);
+
+// Title-bar and Alt+Tab icons of a top-level window, from the logo.
+void setWindowIcons(HWND hwnd, HINSTANCE instance);
+
+// Face of an owner-drawn check box or radio button: a Fluent-style glyph at the left of
+// `bounds`, the label after it in the font currently selected into `dc`. `background`
+// is the parent's colour (the control's rectangle is repainted whole).
+struct ToggleFace {
+    bool radio = false;
+    bool checked = false;
+    bool pressed = false;
+    bool disabled = false;
+    bool focused = false;
+};
+void drawToggle(HDC dc, const RECT& bounds, const wchar_t* label, const ToggleFace& face,
+                COLORREF background, COLORREF text, UINT dpi);
+
+// Tab/Shift+Tab/Enter/Esc for a top-level window made of plain controls: the window opts
+// in, the application's message loop asks with wantsDialogNavigation() and routes through
+// IsDialogMessage().
+void enableDialogNavigation(HWND top);
+[[nodiscard]] bool wantsDialogNavigation(HWND top);
+
+// Hand cursor for anything clickable; call from WM_SETCURSOR and return TRUE.
+void showHandCursor();
+
 // Windows 11 rounded corners for a popup window. Returns false on older Windows, where the
 // caller must draw its own edge.
 bool applyRoundedCorners(HWND hwnd);

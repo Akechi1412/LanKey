@@ -2,9 +2,11 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/model/EngineSettings.h"
+#include "core/model/Hotkey.h"
 #include "core/model/Thresholds.h"
 
 namespace lankey::core::model {
@@ -17,6 +19,9 @@ struct SuggestionSettings {
     // The popup appears only after the user stops typing for this long (flicker guard).
     int idleDelayMs = Thresholds::kSuggestionIdleDelayMs;
     bool selectWithDigits = false;
+    // Enter accepts the highlighted suggestion. Off by default: in a chat window or a
+    // form, Enter means "send", and taking it would cost the user a message.
+    bool selectWithEnter = false;
     // Scoring weights (see SuggestionEngine). Tunable without a rebuild.
     double weightFrequency = 1.0;
     double weightRecency = 0.8;
@@ -47,6 +52,26 @@ struct PrivacySettings {
     friend bool operator==(const PrivacySettings&, const PrivacySettings&) = default;
 };
 
+enum class SendKeysMode : std::uint8_t { Batch, KeyByKey };
+
+struct AdvancedSettings {
+    // How replacements reach the application: one SendInput batch (fast) or one key at a
+    // time (for applications that drop batched input).
+    SendKeysMode sendKeys = SendKeysMode::Batch;
+
+    friend bool operator==(const AdvancedSettings&, const AdvancedSettings&) = default;
+};
+
+// Remember Vietnamese/English per application: the mode the user last chose while that
+// executable had focus is restored when it regains focus.
+struct LanguageMemory {
+    bool enabled = false;
+    // executable name (lowercase) -> true = Vietnamese
+    std::vector<std::pair<std::string, bool>> perApp;
+
+    friend bool operator==(const LanguageMemory&, const LanguageMemory&) = default;
+};
+
 // Everything the user can configure. Serialised to settings.json (schemaVersion guards
 // migrations). Published to the hook thread as an immutable snapshot.
 struct Settings {
@@ -58,6 +83,9 @@ struct Settings {
     SuggestionSettings suggestions;
     AutoCorrectSettings autoCorrect;
     PrivacySettings privacy;
+    AdvancedSettings advanced;
+    LanguageMemory languageMemory;
+    HotkeySettings hotkeys;
 
     friend bool operator==(const Settings&, const Settings&) = default;
 };

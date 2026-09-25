@@ -34,7 +34,8 @@ enum vKeyInputType {
     vTelex = 0,
     vVNI,
     vSimpleTelex1,
-    vSimpleTelex2
+    vSimpleTelex2,
+    vCustom // LanKey patch 002: keys supplied by vSetCustomKeys()
 };
 
 typedef unsigned char Byte;
@@ -143,7 +144,18 @@ struct vKeyHookState {
             keyCode == KEY_D || keyCode == KEY_F || keyCode == KEY_J ||   keyCode == KEY_Z || keyCode == KEY_X || keyCode == KEY_W \
         : (vInputType == vSimpleTelex2 ? \
             keyCode == KEY_W || keyCode == KEY_E || keyCode == KEY_R || keyCode == KEY_O || keyCode == KEY_A || keyCode == KEY_S || \
-            keyCode == KEY_D || keyCode == KEY_F || keyCode == KEY_J ||   keyCode == KEY_Z || keyCode == KEY_X || keyCode == KEY_W : false))))
+            keyCode == KEY_D || keyCode == KEY_F || keyCode == KEY_J ||   keyCode == KEY_Z || keyCode == KEY_X || keyCode == KEY_W \
+        : (vInputType == vCustom ? vIsCustomKey(keyCode) : false)))))
+
+// LanKey patch 002: user-defined input method. Thirteen functions
+// {sắc, huyền, hỏi, ngã, nặng, â, ô, ê, ư/ơ/ă, đ, remove mark, standalone ơ, standalone ư}
+// - the first eleven are the ProcessingChar positions, the last two are the Telex [ ]
+// letters (Shift gives Ơ Ư) - each with up to CUSTOM_KEYS_PER_FUNCTION key codes
+// (KEY_EMPTY for unused slots).
+#define CUSTOM_FUNCTION_COUNT 13
+#define CUSTOM_KEYS_PER_FUNCTION 4
+void vSetCustomKeys(const Uint16 keys[CUSTOM_FUNCTION_COUNT][CUSTOM_KEYS_PER_FUNCTION]);
+bool vIsCustomKey(Uint16 keyCode);
 
 //is VNI or Unicode compound...
 #define IS_DOUBLE_CODE(code) (code == 2 || code == 3)

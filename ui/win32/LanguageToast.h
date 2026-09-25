@@ -1,13 +1,16 @@
 #pragma once
 
+#include <string>
+
 #include "platform/win32/Win32.h"
 #include "ui/win32/Theme.h"
 
 namespace lankey::ui::win32 {
 
-// A quiet, wordless-enough confirmation that the input language changed: the brand tile
-// (V or E) and one line, bottom-right of the monitor the user is working on, gone after
-// a second and a half. Never takes focus, never makes a sound.
+// A quiet, wordless-enough confirmation: a coloured tile with one or two characters (V/E
+// for the input language, 全/半 for a width conversion, ...) and one line, bottom-right of
+// the monitor the user is working on, gone after a second and a half. Never takes focus,
+// never makes a sound.
 //
 // Threading: UI thread only. One window, created on first use, shown/hidden after that.
 class LanguageToast {
@@ -19,6 +22,8 @@ public:
     LanguageToast& operator=(const LanguageToast&) = delete;
 
     void show(HINSTANCE instance, bool vietnamese);
+    void showText(HINSTANCE instance, const std::wstring& tile, COLORREF tileColour,
+                  const std::wstring& text);
     void destroy();
 
 private:
@@ -29,7 +34,9 @@ private:
     HWND hwnd_ = nullptr;
     HFONT font_ = nullptr;
     UINT fontDpi_ = 0;
-    bool vietnamese_ = true;
+    std::wstring tile_ = L"V";
+    COLORREF tileColour_ = kBrandVietnamese;
+    std::wstring text_ = L"Tiếng Việt";
 };
 
 } // namespace lankey::ui::win32

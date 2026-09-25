@@ -8,7 +8,10 @@ add_library(lankey_ui STATIC
     SuggestionPopup.cpp
     DataDialog.cpp
     LanguageToast.cpp
+    SettingsWindow.cpp
+    CustomMethodDialog.cpp
+    HotkeyField.cpp
 )
 target_link_libraries(lankey_ui
     PUBLIC lankey_core
-    PRIVATE user32 gdi32 gdiplus shell32 shcore dwmapi advapi32)
+    PRIVATE user32 gdi32 gdiplus shell32 shcore dwmapi advapi32 comctl32 comdlg32)

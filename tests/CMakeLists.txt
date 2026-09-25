@@ -25,14 +25,20 @@ add_executable(lankey_tests
     unit/suggestion_engine_test.cpp
     unit/pipeline_suggestions_test.cpp
     unit/pipeline_autocorrect_test.cpp
+    unit/pipeline_backspace_test.cpp
     unit/lexicon_store_test.cpp
     unit/smart_worker_test.cpp
     unit/json_settings_store_test.cpp
     unit/toggle_hotkey_test.cpp
+    unit/hotkey_test.cpp
+    unit/hotkey_detector_test.cpp
+    unit/width_converter_test.cpp
+    unit/width_conformance_test.cpp
     replay/ReplayHarness.cpp
     replay/replay_test.cpp        # one test per directory in replay/fixtures/
     replay/replay_harness_test.cpp
     bench/pipeline_bench_test.cpp
+    bench/keystroke_eval_test.cpp
     bench/autocorrect_eval_test.cpp   # hot-path cost, prints numbers
 )
 target_link_libraries(lankey_tests

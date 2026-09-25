@@ -22,10 +22,20 @@ TEST(JsonSettingsStore, RoundTripsEveryField) {
     s.suggestions.enabled = false;
     s.suggestions.minPrefixLength = 3;
     s.suggestions.weightRecency = 0.25;
+    s.suggestions.selectWithDigits = true;
+    s.suggestions.selectWithEnter = true;
     s.autoCorrect.level = AutoCorrectLevel::Aggressive;
+    s.engine.inputMethod = model::InputMethod::Custom;
+    s.engine.customKeys = "1,2,3,4,5,6,6,7,8[,9,0,,";
+    s.engine.codeTable = model::CodeTable::Tcvn3;
     s.autoCorrect.excludedApps = {"x.exe"};
+    s.advanced.sendKeys = model::SendKeysMode::KeyByKey;
+    s.languageMemory.enabled = true;
+    s.languageMemory.perApp = {{"code.exe", false}, {"notepad.exe", true}};
     s.privacy.excludedApps = {"a.exe", "b.exe"};
     s.privacy.suggestionsDisabledApps = {"c.exe"};
+    s.hotkeys.convertWidth = *model::parseHotkey("Ctrl+Shift+Alt+W");
+    s.hotkeys.snippetPicker = {}; // unassigned survives the round trip
 
     const auto back = JsonSettingsStore::parse(JsonSettingsStore::serialize(s));
     ASSERT_TRUE(back.has_value()) << back.error().message;
@@ -47,6 +57,16 @@ TEST(JsonSettingsStore, WrongTypesAndBadEnumsFallBackToDefaults) {
     EXPECT_TRUE(s->vietnameseEnabled);
     EXPECT_EQ(s->engine.inputMethod, InputMethod::Telex);
     EXPECT_EQ(s->suggestions.minPrefixLength, 4); // clamped
+}
+
+TEST(JsonSettingsStore, HotkeysFallBackAndDuplicatesAreResolved) {
+    const auto back = JsonSettingsStore::parse(
+        R"({"hotkeys":{"convertWidth":"Ctrl+Alt","convertLanguage":"Ctrl+Alt+V"}})");
+    ASSERT_TRUE(back.has_value()) << back.error().message;
+    EXPECT_EQ(model::formatHotkey(back->hotkeys.convertWidth), "Ctrl+Alt+F"); // unparsable
+    EXPECT_EQ(model::formatHotkey(back->hotkeys.convertLanguage), "Ctrl+Alt+V");
+    EXPECT_FALSE(back->hotkeys.clipboardHistory.assigned()); // default clashed with the above
+    EXPECT_EQ(model::formatHotkey(back->hotkeys.snippetPicker), "Ctrl+Alt+S");
 }
 
 TEST(JsonSettingsStore, CorruptFileIsAnError) {

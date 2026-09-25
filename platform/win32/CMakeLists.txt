@@ -8,8 +8,10 @@ add_library(lankey_platform_win32 STATIC
     FocusWatcher.cpp
     CaretResolver.cpp
     DpapiProtector.cpp
+    SelectionTransformer.cpp
+    FileWatcher.cpp
 )
 target_link_libraries(lankey_platform_win32
     PUBLIC lankey_core
-    PRIVATE user32 ole32 oleaut32 uuid crypt32)
+    PRIVATE user32 ole32 oleaut32 uuid crypt32 oleacc)
 # uiautomationcore is loaded by COM at runtime; only the IIDs are linked (uuid).

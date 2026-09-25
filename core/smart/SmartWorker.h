@@ -88,6 +88,9 @@ public:
     void eraseAllData(std::function<void(lk::expected<void>)> done);
     // Force a snapshot rebuild now (tests, after import).
     void requestRebuild();
+    // Runs `work` on the DB thread with the store (Settings: read or edit the dictionary).
+    // `work` must not block; hand results back through your own thread-safe channel.
+    void withStore(std::function<void(ILexiconStore&)> work);
     // Blocks until the DB thread has run everything posted so far (tests).
     void drainForTests();
 

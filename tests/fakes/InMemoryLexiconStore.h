@@ -52,6 +52,27 @@ public:
     }
     int cleanups = 0;
 
+    [[nodiscard]] lk::expected<void>
+    removeEntries(const std::vector<std::u32string>& phrases) override {
+        for (const auto& p : phrases)
+            entries_.erase(p);
+        return {};
+    }
+    [[nodiscard]] lk::expected<void> setBlocked(const std::vector<std::u32string>& phrases,
+                                                bool blocked) override {
+        for (const auto& p : phrases) {
+            if (auto it = entries_.find(p); it != entries_.end()) it->second.blocked = blocked;
+        }
+        return {};
+    }
+    [[nodiscard]] lk::expected<void> setPinned(const std::vector<std::u32string>& phrases,
+                                               bool pinned) override {
+        for (const auto& p : phrases) {
+            if (auto it = entries_.find(p); it != entries_.end()) it->second.pinned = pinned;
+        }
+        return {};
+    }
+
     [[nodiscard]] lk::expected<std::vector<core::model::CorrectionRule>>
     loadCorrections() override {
         std::vector<core::model::CorrectionRule> out;

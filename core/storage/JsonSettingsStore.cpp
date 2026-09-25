@@ -1,17 +1,25 @@
 #include "core/storage/JsonSettingsStore.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <thread>
 #include <utility>
 
 #include <nlohmann/json.hpp>
 
 namespace lankey::core::storage {
 
+namespace {
+constexpr int kSaveRenameAttempts = 5;
+constexpr int kSaveRenameRetryMs = 40;
+} // namespace
+
 using model::AutoCorrectLevel;
 using model::Error;
 using model::InputMethod;
+using model::SendKeysMode;
 using model::Settings;
 using nlohmann::json;
 
@@ -25,6 +33,8 @@ const char* inputMethodName(InputMethod m) {
         return "vni";
     case InputMethod::SimpleTelex:
         return "simple-telex";
+    case InputMethod::Custom:
+        return "custom";
     }
     return "telex";
 }
@@ -33,7 +43,36 @@ InputMethod inputMethodFrom(const std::string& s, InputMethod fallback) {
     if (s == "telex") return InputMethod::Telex;
     if (s == "vni") return InputMethod::Vni;
     if (s == "simple-telex") return InputMethod::SimpleTelex;
+    if (s == "custom") return InputMethod::Custom;
     return fallback;
+}
+
+const char* codeTableName(model::CodeTable c) {
+    switch (c) {
+    case model::CodeTable::Unicode:
+        return "unicode";
+    case model::CodeTable::UnicodeCompound:
+        return "unicode-compound";
+    case model::CodeTable::Tcvn3:
+        return "tcvn3";
+    case model::CodeTable::VniWindows:
+        return "vni-windows";
+    }
+    return "unicode";
+}
+
+model::CodeTable codeTableFrom(const std::string& s, model::CodeTable fallback) {
+    if (s == "unicode") return model::CodeTable::Unicode;
+    if (s == "unicode-compound") return model::CodeTable::UnicodeCompound;
+    if (s == "tcvn3") return model::CodeTable::Tcvn3;
+    if (s == "vni-windows") return model::CodeTable::VniWindows;
+    return fallback;
+}
+
+// Canonical form of a usable table; anything malformed -> the default (Telex).
+std::string sanitizedCustomKeys(const std::string& keys) {
+    if (const auto table = model::parseCustomKeys(keys)) return model::joinCustomKeys(*table);
+    return model::kDefaultCustomKeys;
 }
 
 const char* levelName(AutoCorrectLevel l) {
@@ -83,12 +122,15 @@ std::string JsonSettingsStore::serialize(const Settings& s) {
         {"modernToneMark", s.engine.modernToneMark},
         {"spellCheck", s.engine.spellCheck},
         {"quickTelex", s.engine.quickTelex},
+        {"codeTable", codeTableName(s.engine.codeTable)},
+        {"customKeys", s.engine.customKeys},
     };
     j["suggestions"] = {
         {"enabled", s.suggestions.enabled},
         {"minPrefixLength", s.suggestions.minPrefixLength},
         {"idleDelayMs", s.suggestions.idleDelayMs},
         {"selectWithDigits", s.suggestions.selectWithDigits},
+        {"selectWithEnter", s.suggestions.selectWithEnter},
         {"weightFrequency", s.suggestions.weightFrequency},
         {"weightRecency", s.suggestions.weightRecency},
         {"weightAppContext", s.suggestions.weightAppContext},
@@ -100,10 +142,25 @@ std::string JsonSettingsStore::serialize(const Settings& s) {
         {"level", levelName(s.autoCorrect.level)},
         {"excludedApps", s.autoCorrect.excludedApps},
     };
+    j["advanced"] = {
+        {"sendKeys", s.advanced.sendKeys == SendKeysMode::KeyByKey ? "keyByKey" : "batch"},
+    };
+    {
+        nlohmann::json perApp = nlohmann::json::object();
+        for (const auto& [app, vietnamese] : s.languageMemory.perApp)
+            perApp[app] = vietnamese;
+        j["languageMemory"] = {{"enabled", s.languageMemory.enabled}, {"perApp", perApp}};
+    }
     j["privacy"] = {
         {"excludedApps", s.privacy.excludedApps},
         {"suggestionsDisabledApps", s.privacy.suggestionsDisabledApps},
     };
+    {
+        nlohmann::json hotkeys = nlohmann::json::object();
+        for (const auto a : model::kAllHotkeyActions)
+            hotkeys[model::hotkeyActionName(a)] = model::formatHotkey(s.hotkeys[a]);
+        j["hotkeys"] = hotkeys;
+    }
     return j.dump(2) + "\n";
 }
 
@@ -125,6 +182,14 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
         std::string method;
         get(*e, "inputMethod", method);
         s.engine.inputMethod = inputMethodFrom(method, s.engine.inputMethod);
+        {
+            std::string codeTable;
+            get(*e, "codeTable", codeTable);
+            s.engine.codeTable = codeTableFrom(codeTable, s.engine.codeTable);
+            std::string customKeys = s.engine.customKeys;
+            get(*e, "customKeys", customKeys);
+            s.engine.customKeys = sanitizedCustomKeys(customKeys);
+        }
         get(*e, "modernToneMark", s.engine.modernToneMark);
         get(*e, "spellCheck", s.engine.spellCheck);
         get(*e, "quickTelex", s.engine.quickTelex);
@@ -135,6 +200,7 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
         get(*g, "minPrefixLength", o.minPrefixLength);
         get(*g, "idleDelayMs", o.idleDelayMs);
         get(*g, "selectWithDigits", o.selectWithDigits);
+        get(*g, "selectWithEnter", o.selectWithEnter);
         get(*g, "weightFrequency", o.weightFrequency);
         get(*g, "weightRecency", o.weightRecency);
         get(*g, "weightAppContext", o.weightAppContext);
@@ -152,9 +218,37 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
         s.autoCorrect.level = levelFrom(level, s.autoCorrect.level);
         get(*a, "excludedApps", s.autoCorrect.excludedApps);
     }
+    if (const auto a = j.find("advanced"); a != j.end() && a->is_object()) {
+        std::string mode;
+        get(*a, "sendKeys", mode);
+        s.advanced.sendKeys = mode == "keyByKey" ? SendKeysMode::KeyByKey : SendKeysMode::Batch;
+    }
+    if (const auto m = j.find("languageMemory"); m != j.end() && m->is_object()) {
+        get(*m, "enabled", s.languageMemory.enabled);
+        if (const auto p = m->find("perApp"); p != m->end() && p->is_object()) {
+            s.languageMemory.perApp.clear();
+            for (const auto& [app, value] : p->items()) {
+                if (value.is_boolean())
+                    s.languageMemory.perApp.emplace_back(app, value.get<bool>());
+            }
+        }
+    }
     if (const auto p = j.find("privacy"); p != j.end() && p->is_object()) {
         get(*p, "excludedApps", s.privacy.excludedApps);
         get(*p, "suggestionsDisabledApps", s.privacy.suggestionsDisabledApps);
+    }
+    if (const auto h = j.find("hotkeys"); h != j.end() && h->is_object()) {
+        for (const auto a : model::kAllHotkeyActions) {
+            const auto it = h->find(model::hotkeyActionName(a));
+            if (it == h->end() || !it->is_string()) continue; // absent: keep the default
+            const std::string chord = it->get<std::string>();
+            if (chord.empty()) {
+                s.hotkeys[a] = {}; // deliberately unassigned
+            } else if (const auto parsed = model::parseHotkey(chord)) {
+                s.hotkeys[a] = *parsed;
+            } // unparsable: keep the default
+        }
+        s.hotkeys.resolveDuplicates();
     }
     return s;
 }
@@ -182,11 +276,16 @@ lk::expected<void> JsonSettingsStore::save(const Settings& settings) const {
             return lk::unexpected(Error::make(Error::Code::Io, "write failed " + temp.string()));
         }
     }
-    std::filesystem::rename(temp, target, ec);
-    if (ec) {
-        return lk::unexpected(Error::make(Error::Code::Io, "rename failed: " + ec.message()));
+    // The file is also the user's editing surface: an editor (or a backup tool) can hold
+    // it open for a moment exactly when we save, and the rename then fails. Losing a
+    // setting because of a 20 ms overlap is not acceptable, so retry briefly.
+    for (int attempt = 0; attempt < kSaveRenameAttempts; ++attempt) {
+        ec.clear();
+        std::filesystem::rename(temp, target, ec);
+        if (!ec) return {};
+        std::this_thread::sleep_for(std::chrono::milliseconds(kSaveRenameRetryMs));
     }
-    return {};
+    return lk::unexpected(Error::make(Error::Code::Io, "rename failed: " + ec.message()));
 }
 
 } // namespace lankey::core::storage

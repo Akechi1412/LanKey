@@ -6,8 +6,11 @@ máy người dùng, không có đồng bộ cloud.
 
 > **Trạng thái:** v0.1 (MVP) đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
 > SQLite niêm phong bằng DPAPI, gợi ý/dự đoán có popup, tự sửa lỗi cá nhân hoá (F2, mặc định mức
-> Thận trọng, Undo bằng Backspace/Ctrl+Z), tray icon với "Dữ liệu của bạn", Ctrl+Shift bật/tắt.
-> Chưa có: cửa sổ Settings, ký số bản phát hành.
+> Thận trọng, Undo bằng Backspace/Ctrl+Z), tray icon, cửa sổ Cài đặt 8 tab (kiểu gõ Telex/VNI/
+> Telex đơn giản/**tự định nghĩa 11 phím**, bảng mã Unicode/Unicode tổ hợp/TCVN3/VNI Windows, tuỳ
+> chọn gõ, gợi ý & tự sửa, từ điển cá nhân, quyền riêng tư, phím tắt, nâng cao — mở/tải lại
+> `settings.json`, đặt lại mặc định — giới thiệu), toast đổi Việt/Anh, Ctrl+Shift bật/tắt. Chưa
+> có: ký số bản phát hành, đổi phím tắt, import từ điển.
 
 ## Ý tưởng
 
@@ -95,11 +98,40 @@ cmake --build --preset win-clang-debug
 ctest --preset win-clang-debug
 ```
 
-Lần configure đầu vcpkg sẽ build `gtest` (~1 phút). Engine OpenKey được bật mặc định
-(`LANKEY_ENGINE_OPENKEY=ON`).
+Lần configure đầu vcpkg sẽ build `gtest` và `sqlite3` (~2 phút). Preset này dùng triplet
+riêng `x64-llvm-mingw-static` (`cmake/triplets/`, chainload `cmake/toolchains/llvm-mingw.cmake`)
+để các port vcpkg cũng biên dịch bằng clang/libc++ — triplet `x64-mingw-static` có sẵn sẽ
+chọn `x86_64-w64-mingw32-gcc` nào có trên PATH (ví dụ MSYS2 GCC, libstdc++) và không link
+được với bản build libc++. Engine OpenKey được bật mặc định (`LANKEY_ENGINE_OPENKEY=ON`).
+
+**Phím tắt toàn cục** (đổi được trong Cài đặt › Phím tắt): `Ctrl+Shift` đổi Việt/Anh (cố định);
+`Ctrl+Alt+F` chuyển vùng bôi đen giữa half-width và full-width (ASCII, ¥ và các ký hiệu ¢£¬¯¦,
+katakana kể cả dấu hữu thanh; bấm lần nữa để trở lại — bảng đối chiếu với Unicode và với chính
+Windows, xem `tests/data/`); `Ctrl+Alt+L`, `Ctrl+Alt+V`, `Ctrl+Alt+S` dành cho chuyển đổi ngôn ngữ, clipboard history
+và bảng chọn gõ tắt (đang phát triển). Khi biến đổi vùng bôi đen, LanKey dùng clipboard trong
+khoảnh khắc rồi khôi phục lại.
+
+**Sửa cài đặt bằng tệp**: Cài đặt › Nâng cao › *Mở settings.json* mở bằng trình soạn thảo code
+(VS Code, Cursor, Sublime, Notepad++ — tìm qua registry `App Paths`, gọi qua CLI `bin\*.cmd` của
+editor) nếu máy có, rồi mới tới app gắn với `.json`. **Lưu tệp là LanKey áp dụng ngay** và cập
+nhật cửa sổ Cài đặt — không có nút "tải lại" vì không cần; JSON chưa hợp lệ chỉ hiện một thông
+báo nhỏ và được bỏ qua cho tới lần lưu kế.
+
+Kiểm thử giao diện (Windows, LanKey đang chạy): `powershell -File tools/uitest/Smoke-Settings.ps1`
+điều khiển cửa sổ Cài đặt và hộp thoại kiểu gõ tự định nghĩa bằng thông điệp Win32 (mọi trang,
+mọi loại control, vòng `settings.json`, đặt lại, kéo giữa hai màn hình khác DPI), in PASS/FAIL và
+chụp ảnh vào `tools/uitest/shots/`. `Smoke-Selection.ps1` kiểm tra biến đổi vùng bôi đen và
+`Smoke-Width.ps1` kiểm tra chuyển half/full-width, `Smoke-Hotkeys.ps1` kiểm tra việc ghi phím tắt
+(ba bộ này chỉ gõ khi cửa sổ đích thật sự ở foreground), `Smoke-Scroll.ps1` kiểm tra cuộn và kéo
+giãn cửa sổ Cài đặt (chỉ gửi thông điệp, chạy được cả khi máy khoá).
+Chạy `lankey.exe` lần hai khi đang chạy sẽ mở Cài đặt.
 
 Từ điển âm tiết chuẩn: `python tools/build-dictionary/build_syllables.py` sinh
 `data/vi_base_syllables.txt` (nguồn và license trong `tools/build-dictionary/SOURCES.md`).
+
+Logo: `python tools/brand/make-logo.py` sinh `assets/brand/lankey-logo.svg` và
+`app/lankey.ico` (cần `pip install Pillow`). Hai tệp này đã được commit; chỉ chạy lại khi
+đổi logo — `.ico` chứa nhiều kích thước, mỗi kích thước render riêng nên không sửa tay được.
 
 ## Test
 

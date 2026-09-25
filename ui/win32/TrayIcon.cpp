@@ -27,6 +27,7 @@ enum MenuId : UINT {
     kMenuAutoCorrect,
     kMenuEraseData,
     kMenuShowData,
+    kMenuSettings,
     kMenuQuit,
 };
 
@@ -107,6 +108,7 @@ void TrayIcon::updateIcon() {
     nid.hIcon = vietnamese_ ? iconVietnamese_ : iconEnglish_;
     const wchar_t* method = method_ == InputMethod::Vni           ? L"VNI"
                             : method_ == InputMethod::SimpleTelex ? L"Simple Telex"
+                            : method_ == InputMethod::Custom      ? L"Tự định nghĩa"
                                                                   : L"Telex";
     swprintf_s(nid.szTip, L"LanKey - %s (%s)", vietnamese_ ? L"Tiếng Việt" : L"English", method);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
@@ -208,11 +210,24 @@ LRESULT CALLBACK TrayIcon::wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 LRESULT TrayIcon::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
     if (msg == kTrayMessage) {
         switch (LOWORD(lParam)) {
-        case WM_LBUTTONUP:
         case NIN_SELECT:
         case NIN_KEYSELECT:
+            // NOTIFYICON_VERSION_4 delivers NIN_SELECT for a click in addition to the
+            // WM_LBUTTONUP it also sends; handling both toggled twice (V stayed V).
+            //
+            // The language switches on this click, not after the double-click interval:
+            // waiting made the icon feel broken next to Ctrl+Shift, which is instant.
+            lastToggleTick_ = GetTickCount64();
             if (callbacks_.onToggleVietnamese) callbacks_.onToggleVietnamese();
             return 0;
+        case WM_LBUTTONDBLCLK: {
+            // The first of the two clicks already toggled the language. Put it back -
+            // quietly, so the user does not see two toasts - and open the panel.
+            const bool justToggled = GetTickCount64() - lastToggleTick_ <= GetDoubleClickTime();
+            if (justToggled && callbacks_.onUndoToggle) callbacks_.onUndoToggle();
+            if (callbacks_.onSettings) callbacks_.onSettings();
+            return 0;
+        }
         case WM_RBUTTONUP:
         case WM_CONTEXTMENU:
             showMenu();
@@ -243,6 +258,9 @@ LRESULT TrayIcon::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
         case kMenuShowData:
             if (callbacks_.onShowData) callbacks_.onShowData();
+            break;
+        case kMenuSettings:
+            if (callbacks_.onSettings) callbacks_.onSettings();
             break;
         case kMenuEraseData:
             if (callbacks_.onEraseAllData) callbacks_.onEraseAllData();
@@ -286,8 +304,9 @@ void TrayIcon::showMenu() {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, check(suggestions_), kMenuSuggestions, L"Gợi ý cụm từ");
     AppendMenuW(menu, check(autoCorrect_), kMenuAutoCorrect, L"Tự sửa lỗi chính tả");
-    AppendMenuW(menu, MF_STRING, kMenuShowData, L"Dữ liệu của bạn...");
-    AppendMenuW(menu, MF_STRING, kMenuEraseData, L"Xoá toàn bộ dữ liệu đã học...");
+    AppendMenuW(menu, MF_STRING, kMenuSettings, L"Bảng điều khiển");
+    AppendMenuW(menu, MF_STRING, kMenuShowData, L"Dữ liệu của bạn");
+    AppendMenuW(menu, MF_STRING, kMenuEraseData, L"Xoá toàn bộ dữ liệu đã học");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kMenuQuit, L"Thoát");
 

@@ -35,23 +35,63 @@ static Uint16 ProcessingChar[][11] = {
     {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KEY_O, KEY_E, KEY_W, KEY_D, KEY_Z}, //Telex
     {KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_6, KEY_7, KEY_8, KEY_9, KEY_0}, //VNI
     {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KEY_O, KEY_E, KEY_W, KEY_D, KEY_Z}, //Simple Telex 1
-    {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KEY_O, KEY_E, KEY_W, KEY_D, KEY_Z} //Simple Telex 2
+    {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KEY_O, KEY_E, KEY_W, KEY_D, KEY_Z}, //Simple Telex 2
+    {KEY_S, KEY_F, KEY_R, KEY_X, KEY_J, KEY_A, KEY_O, KEY_E, KEY_W, KEY_D, KEY_Z}  //Custom (LanKey patch 002)
 };
 
-#define IS_KEY_Z(key) (ProcessingChar[vInputType][10] == key)
-#define IS_KEY_D(key) (ProcessingChar[vInputType][9] == key)
-#define IS_KEY_W(key) ((vInputType != vVNI) ? ProcessingChar[vInputType][8] == key : \
-                                    (vInputType == vVNI ? (ProcessingChar[vInputType][8] == key || ProcessingChar[vInputType][7] == key) : false))
-#define IS_KEY_DOUBLE(key) ((vInputType != vVNI) ? (ProcessingChar[vInputType][5] == key || ProcessingChar[vInputType][6] == key || ProcessingChar[vInputType][7] == key) :\
-                                        (vInputType == vVNI ? ProcessingChar[vInputType][6] == key : false))
-#define IS_KEY_S(key) (ProcessingChar[vInputType][0] == key)
-#define IS_KEY_F(key) (ProcessingChar[vInputType][1] == key)
-#define IS_KEY_R(key) (ProcessingChar[vInputType][2] == key)
-#define IS_KEY_X(key) (ProcessingChar[vInputType][3] == key)
-#define IS_KEY_J(key) (ProcessingChar[vInputType][4] == key)
+// LanKey patch 002: the custom method keeps its own table with several keys per
+// function (Unikey lets one function have many keys, e.g. both 'w' and '[' for the horn);
+// the ProcessingChar row above is unused for it. Behaves like Telex otherwise (doubled
+// vowel keys for the circumflex, one key for the horn/breve).
+static Uint16 CustomKeys[CUSTOM_FUNCTION_COUNT][CUSTOM_KEYS_PER_FUNCTION] = {
+    {KEY_S, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, {KEY_F, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_R, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, {KEY_X, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_J, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, {KEY_A, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_O, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, {KEY_E, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_W, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, {KEY_D, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_Z, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},
+    {KEY_LEFT_BRACKET, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY},  // standalone ơ
+    {KEY_RIGHT_BRACKET, KEY_EMPTY, KEY_EMPTY, KEY_EMPTY}, // standalone ư
+};
+#define CUSTOM_STANDALONE_O 11
+#define CUSTOM_STANDALONE_U 12
 
-#define IS_MARK_KEY(keyCode) (((vInputType != vVNI) && (keyCode == KEY_S || keyCode == KEY_F || keyCode == KEY_R || keyCode == KEY_J || keyCode == KEY_X)) || \
-                                        (vInputType == vVNI && (keyCode == KEY_1 || keyCode == KEY_2 || keyCode == KEY_3 || keyCode == KEY_5 || keyCode == KEY_4)))
+void vSetCustomKeys(const Uint16 keys[CUSTOM_FUNCTION_COUNT][CUSTOM_KEYS_PER_FUNCTION]) {
+    for (int i = 0; i < CUSTOM_FUNCTION_COUNT; i++)
+        for (int j = 0; j < CUSTOM_KEYS_PER_FUNCTION; j++) CustomKeys[i][j] = keys[i][j];
+}
+
+static bool vCustomHas(int function, Uint16 keyCode) {
+    if (keyCode == KEY_EMPTY) return false;
+    for (int j = 0; j < CUSTOM_KEYS_PER_FUNCTION; j++) {
+        if (CustomKeys[function][j] == keyCode) return true;
+    }
+    return false;
+}
+
+bool vIsCustomKey(Uint16 keyCode) {
+    for (int i = 0; i < CUSTOM_FUNCTION_COUNT; i++) {
+        if (vCustomHas(i, keyCode)) return true;
+    }
+    return false;
+}
+
+// Does `key` fill function slot `pos` of the active method?
+#define IS_AT(pos, key) (vInputType == vCustom ? vCustomHas(pos, key) : ProcessingChar[vInputType][pos] == key)
+
+#define IS_KEY_Z(key) IS_AT(10, key)
+#define IS_KEY_D(key) IS_AT(9, key)
+#define IS_KEY_W(key) ((vInputType != vVNI) ? IS_AT(8, key) : \
+                                    (vInputType == vVNI ? (IS_AT(8, key) || IS_AT(7, key)) : false))
+#define IS_KEY_DOUBLE(key) ((vInputType != vVNI) ? (IS_AT(5, key) || IS_AT(6, key) || IS_AT(7, key)) :\
+                                        (vInputType == vVNI ? IS_AT(6, key) : false))
+#define IS_KEY_S(key) IS_AT(0, key)
+#define IS_KEY_F(key) IS_AT(1, key)
+#define IS_KEY_R(key) IS_AT(2, key)
+#define IS_KEY_X(key) IS_AT(3, key)
+#define IS_KEY_J(key) IS_AT(4, key)
+
+#define IS_MARK_KEY(keyCode) (IS_KEY_S(keyCode) || IS_KEY_F(keyCode) || IS_KEY_R(keyCode) || IS_KEY_X(keyCode) || IS_KEY_J(keyCode)) // LanKey patch 002: table-driven
 #define IS_BRACKET_KEY(key) (key == KEY_LEFT_BRACKET || key == KEY_RIGHT_BRACKET)
 
 #define VSI vowelStartIndex
@@ -145,6 +185,8 @@ void* vKeyInit() {
 bool isWordBreak(const vKeyEvent& event, const vKeyEventState& state, const Uint16& data) {
     if (event == vKeyEvent::Mouse)
         return true;
+    if (vInputType == vCustom && vIsCustomKey(data)) // LanKey patch 002: a punctuation key given a function is not a break
+        return false;
     for (i = 0; i < _breakCode.size(); i++) {
         if (_breakCode[i] == data) {
             return true;
@@ -362,7 +404,7 @@ void insertKey(const Uint16& keyCode, const bool& isCaps, const bool& isCheckSpe
         checkSpelling();
     
     //allow d after consonant
-    if (keyCode == KEY_D && _index - 2 >= 0 && IS_CONSONANT(CHR(_index - 2)))
+    if (IS_KEY_D(keyCode) && _index - 2 >= 0 && IS_CONSONANT(CHR(_index - 2))) // LanKey patch 002
         tempDisableKey = false;
 }
 
@@ -1052,6 +1094,28 @@ void upperCaseFirstCharacter() {
     }
 }
 
+// LanKey patch 002: the custom â/ô/ê/horn keys stand for the Telex letters the vowel tables
+// are keyed by. A key shared by several positions (VNI-style 6 for both â and ô) is
+// resolved by the last a/o/e typed, like VNI's KEY_6.
+static Uint16 vCustomVowelKey(const Uint16& data) {
+    static const Uint16 canonical[4] = {KEY_A, KEY_O, KEY_E, KEY_W};
+    int matches = 0, first = -1;
+    for (int p = 5; p <= 8; p++) {
+        if (vCustomHas(p, data)) {
+            matches++;
+            if (first < 0) first = p;
+        }
+    }
+    if (first < 0) return data;
+    if (matches == 1) return canonical[first - 5];
+    for (int i = _index - 1; i >= 0; i--) {
+        for (int p = 5; p <= 7; p++) {
+            if (vCustomHas(p, data) && CHR(i) == canonical[p - 5]) return canonical[p - 5];
+        }
+    }
+    return canonical[first - 5];
+}
+
 void handleMainKey(const Uint16& data, const bool& isCaps) {
     //if is Z key, remove mark
     if (IS_KEY_Z(data)) {
@@ -1062,12 +1126,21 @@ void handleMainKey(const Uint16& data, const bool& isCaps) {
         return;
     }
     
-    if (data == KEY_LEFT_BRACKET) { //standalone key [
+    // LanKey patch 002: the custom method decides itself which keys (if any) type a
+    // standalone ơ / ư; the Telex [ ] shortcut below only applies to the built-in methods.
+    if (vInputType == vCustom) {
+        if (vCustomHas(CUSTOM_STANDALONE_O, data)) {
+            checkForStandaloneChar(data, isCaps, KEY_O);
+            return;
+        }
+        if (vCustomHas(CUSTOM_STANDALONE_U, data)) {
+            checkForStandaloneChar(data, isCaps, KEY_U);
+            return;
+        }
+    } else if (data == KEY_LEFT_BRACKET) { //standalone key [
         checkForStandaloneChar(data, isCaps, KEY_O);
         return;
-    }
-    
-    if (data == KEY_RIGHT_BRACKET) { //standalone key }
+    } else if (data == KEY_RIGHT_BRACKET) { //standalone key }
         checkForStandaloneChar(data, isCaps, KEY_U);
         return;
     }
@@ -1151,7 +1224,8 @@ void handleMainKey(const Uint16& data, const bool& isCaps) {
         }
     }
     
-    keyForAEO = ((vInputType != vVNI) ? data : ((data == KEY_7 || data == KEY_8 ? KEY_W : (data == KEY_6 ? TypingWord[VEI] : data))));
+    keyForAEO = (vInputType == vCustom) ? vCustomVowelKey(data) : // LanKey patch 002
+                ((vInputType != vVNI) ? data : ((data == KEY_7 || data == KEY_8 ? KEY_W : (data == KEY_6 ? TypingWord[VEI] : data))));
     vector<vector<Uint16>>& charset = _vowel[keyForAEO];
     isCorect = false;
     isChanged = false;
@@ -1184,7 +1258,7 @@ void handleMainKey(const Uint16& data, const bool& isCaps) {
     }
     
     if (!isChanged) {
-        if (data == KEY_W && vInputType != vSimpleTelex1) {
+        if ((vInputType == vCustom ? IS_KEY_W(data) : data == KEY_W) && vInputType != vSimpleTelex1) { // LanKey patch 002
             checkForStandaloneChar(data, isCaps, KEY_U);
         } else {
             insertKey(data, isCaps);

@@ -24,6 +24,10 @@ public:
         std::function<void(bool)> onAutoCorrectEnabled;
         std::function<void()> onEraseAllData;
         std::function<void()> onShowData; // "Dữ liệu của bạn"
+        std::function<void()> onSettings;
+        // Undo the language switch the first click of a double click performed, without a
+        // toast: the user asked for the control panel, not for English.
+        std::function<void()> onUndoToggle;
         std::function<void()> onQuit;
     };
 
@@ -56,6 +60,7 @@ private:
     HICON iconEnglish_ = nullptr;
     UINT taskbarCreatedMessage_ = 0;
     Callbacks callbacks_;
+    ULONGLONG lastToggleTick_ = 0; // when a click last switched the language
     bool vietnamese_ = true;
     bool suggestions_ = true;
     bool autoCorrect_ = true;

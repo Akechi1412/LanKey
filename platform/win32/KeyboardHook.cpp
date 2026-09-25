@@ -131,6 +131,8 @@ bool KeyboardHook::installHooks() {
     const ULONGLONG now = GetTickCount64();
     lastKeyboardTick_.store(now);
     lastMouseTick_.store(now);
+    // Whatever was held when the old hook stopped receiving keys, its release was missed.
+    trackedModifiers_ = Modifier::None;
     return keyboardHook_ != nullptr;
 }
 
@@ -188,6 +190,21 @@ void KeyboardHook::watchdogMain() {
             Sleep(100);
         if (stopping_.load()) break;
 
+        // Input typed on another desktop - the lock screen, a UAC prompt - advances the
+        // system's idle timer but is invisible to a hook on ours. Treating that as a dead
+        // hook reinstalled it for no reason (31 times in 4.4 h of ordinary use, measured
+        // 2026-09-24, on a machine locked with Win+L whenever its owner stepped away).
+        if (const HDESK input = OpenInputDesktop(0, FALSE, DESKTOP_READOBJECTS); input != nullptr) {
+            CloseDesktop(input);
+        } else {
+            // Not our desktop. Start the clock again so the time spent away is not
+            // counted as silence from the hook.
+            const ULONGLONG now = GetTickCount64();
+            lastKeyboardTick_.store(now);
+            lastMouseTick_.store(now);
+            continue;
+        }
+
         LASTINPUTINFO info{};
         info.cbSize = sizeof(info);
         if (!GetLastInputInfo(&info)) continue;
@@ -196,6 +213,7 @@ void KeyboardHook::watchdogMain() {
         const DWORD lastSeen =
             static_cast<DWORD>((std::max)(lastKeyboardTick_.load(), lastMouseTick_.load()));
         if (lastInput > lastSeen && (lastInput - lastSeen) > kDeadAfterMs) {
+            stats_.lastDeadGapMs.store(lastInput - lastSeen, std::memory_order_relaxed);
             if (const DWORD tid = threadId_.load(); tid != 0) {
                 PostThreadMessageW(tid, kMsgReinstall, 0, 0);
             }
@@ -262,16 +280,101 @@ bool KeyboardHook::onKey(WPARAM message, const KBDLLHOOKSTRUCT& k) noexcept {
     return swallow;
 }
 
-KeyEvent KeyboardHook::translate(WPARAM message, const KBDLLHOOKSTRUCT& k) const {
+// Which modifier a virtual key belongs to, or None.
+Modifier KeyboardHook::modifierFor(DWORD vk) noexcept {
+    switch (vk) {
+    case VK_SHIFT:
+    case VK_LSHIFT:
+    case VK_RSHIFT:
+        return Modifier::Shift;
+    case VK_CONTROL:
+    case VK_LCONTROL:
+    case VK_RCONTROL:
+        return Modifier::Control;
+    case VK_MENU:
+    case VK_LMENU:
+    case VK_RMENU:
+        return Modifier::Alt;
+    case VK_LWIN:
+    case VK_RWIN:
+        return Modifier::Win;
+    default:
+        return Modifier::None;
+    }
+}
+
+// Drop anything the tracked set believes is held but the OS reports as up. The key this
+// event is about is left alone: on its own key-down the async state has not caught up yet,
+// which is the whole reason the tracked set exists.
+void KeyboardHook::reconcileModifiers(DWORD vk) noexcept {
+    const Modifier own = modifierFor(vk);
+    auto bits = static_cast<std::uint8_t>(trackedModifiers_);
+    const auto drop = [&](Modifier m, bool physicallyDown) {
+        if (m == own || physicallyDown) return;
+        bits &= static_cast<std::uint8_t>(~static_cast<std::uint8_t>(m));
+    };
+    drop(Modifier::Shift, isDown(VK_SHIFT));
+    drop(Modifier::Control, isDown(VK_CONTROL));
+    drop(Modifier::Alt, isDown(VK_MENU));
+    drop(Modifier::Win, isDown(VK_LWIN) || isDown(VK_RWIN));
+    trackedModifiers_ = static_cast<Modifier>(bits);
+}
+
+void KeyboardHook::trackModifier(WPARAM message, DWORD vk) noexcept {
+    Modifier m = Modifier::None;
+    switch (vk) {
+    case VK_SHIFT:
+    case VK_LSHIFT:
+    case VK_RSHIFT:
+        m = Modifier::Shift;
+        break;
+    case VK_CONTROL:
+    case VK_LCONTROL:
+    case VK_RCONTROL:
+        m = Modifier::Control;
+        break;
+    case VK_MENU:
+    case VK_LMENU:
+    case VK_RMENU:
+        m = Modifier::Alt;
+        break;
+    case VK_LWIN:
+    case VK_RWIN:
+        m = Modifier::Win;
+        break;
+    default:
+        return;
+    }
+    const bool down = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN);
+    const auto bits = static_cast<std::uint8_t>(trackedModifiers_);
+    const auto bit = static_cast<std::uint8_t>(m);
+    trackedModifiers_ = static_cast<Modifier>(down ? (bits | bit) : (bits & ~bit));
+}
+
+KeyEvent KeyboardHook::translate(WPARAM message, const KBDLLHOOKSTRUCT& k) {
     KeyEvent ev;
     ev.isDown = (message == WM_KEYDOWN || message == WM_SYSKEYDOWN);
     ev.timestampMs = static_cast<std::int64_t>(k.time);
     ev.injectedBySelf = (k.flags & LLKHF_INJECTED) != 0 && k.dwExtraInfo == kLanKeyMagic;
 
-    if (isDown(VK_SHIFT)) ev.modifiers = ev.modifiers | Modifier::Shift;
-    if (isDown(VK_CONTROL)) ev.modifiers = ev.modifiers | Modifier::Control;
-    if (isDown(VK_MENU)) ev.modifiers = ev.modifiers | Modifier::Alt;
-    if (isDown(VK_LWIN) || isDown(VK_RWIN)) ev.modifiers = ev.modifiers | Modifier::Win;
+    // The tracked set exists only because GetAsyncKeyState lags behind injected input.
+    // It must never outlive the real key: a key-up this hook never saw leaves a modifier
+    // stuck down, every later key then looks like a shortcut, and LanKey stops composing
+    // entirely - typing goes English until that modifier happens to be pressed again.
+    //
+    // Win+L is the everyday way to hit this: both keys go down on our desktop and come up
+    // on the lock screen, where no hook of ours can see them.
+    trackModifier(message, k.vkCode);
+    reconcileModifiers(k.vkCode);
+    const auto tracked = [this](Modifier m) { return has(trackedModifiers_, m); };
+    if (tracked(Modifier::Shift) || isDown(VK_SHIFT)) ev.modifiers = ev.modifiers | Modifier::Shift;
+    if (tracked(Modifier::Control) || isDown(VK_CONTROL)) {
+        ev.modifiers = ev.modifiers | Modifier::Control;
+    }
+    if (tracked(Modifier::Alt) || isDown(VK_MENU)) ev.modifiers = ev.modifiers | Modifier::Alt;
+    if (tracked(Modifier::Win) || isDown(VK_LWIN) || isDown(VK_RWIN)) {
+        ev.modifiers = ev.modifiers | Modifier::Win;
+    }
     if ((GetKeyState(VK_CAPITAL) & 1) != 0) ev.modifiers = ev.modifiers | Modifier::CapsLock;
 
     if (!ev.isDown) {

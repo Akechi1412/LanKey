@@ -50,7 +50,9 @@ TEST(ReplayHarnessRun, ProducesScreenAndCommitsWithFakeEngine) {
     ASSERT_TRUE(events.has_value());
     const auto result = ReplayHarness::run(*events, engine);
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->screen, U"ab X."); // FakeEngine: x replaces the last char
+    // FakeEngine: x replaces the last char. Enter reaches the application as the line
+    // break it inserts.
+    EXPECT_EQ(result->screen, U"ab X.\n");
     ASSERT_EQ(result->commits.size(), 2u);
     EXPECT_EQ(result->commits[0], "ab|SP|0");
     EXPECT_EQ(result->commits[1], "ab x|.|1");

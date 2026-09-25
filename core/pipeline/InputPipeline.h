@@ -114,6 +114,15 @@ public:
     // user has not typed since; otherwise does nothing (a newer list is pending or none).
     void promotePending(std::uint64_t generation);
 
+    // Suggestions may also be picked with the digit keys 1..5 (SuggestionSettings).
+    void setSelectWithDigits(bool enabled) noexcept {
+        selectWithDigits_.store(enabled, std::memory_order_release);
+    }
+    // ... and with Enter. Off by default: Enter sends the message in most applications.
+    void setSelectWithEnter(bool enabled) noexcept {
+        selectWithEnter_.store(enabled, std::memory_order_release);
+    }
+
     // Vietnamese on/off (tray toggle, hotkey). Off = every key passes through untouched.
     void setVietnameseEnabled(bool enabled) noexcept {
         vietnameseEnabled_.store(enabled, std::memory_order_release);
@@ -143,6 +152,10 @@ private:
     bool handleKey(const model::KeyEvent& key, std::uint64_t generation);
     bool handlePopupKey(const model::KeyEvent& key, std::uint64_t generation);
     bool applyEngineResult(const model::EngineResult& result, std::uint64_t generation);
+    void keepPrefixInStep(const model::EngineResult& result, const model::KeyEvent& key);
+    // True when the pending retype turned out to have changed nothing: the window is
+    // restored as it was and the retype is dropped.
+    bool restoreUntouchedSyllable(char32_t terminator);
     void commitSyllable(const std::u32string& text, bool transformApplied, char32_t terminator,
                         std::uint64_t generation);
     void refreshSuggestions(std::uint64_t generation, bool afterWordBoundary);
@@ -164,6 +177,10 @@ private:
         int trailing = 0;         // boundary characters after the syllable (usually 1)
         char32_t terminator = 0;  // the first of them
         std::u32string separator; // all of them, in order
+        // Whether the engine transformed this syllable. Kept so a syllable that is
+        // committed a second time (its separator was deleted and retyped) reports what it
+        // reported the first time - AutoCorrect only looks at Vietnamese ones.
+        bool transformApplied = false;
     };
 
     // The user is deleting back into committed text. Two things follow from tracking it:
@@ -178,9 +195,10 @@ private:
         int deleted = 0;          // Backspaces so far
         int syllablesRemoved = 0; // syllables to be retyped (the partial one included)
         int recommitted = 0;
-        bool partial = false;   // the deletion stopped inside a syllable
-        std::u32string prefix;  // what remains of it on screen
-        bool learnable = false; // started within kRetypeWindowMs of the last commit
+        bool partial = false;                // the deletion stopped inside a syllable
+        std::u32string prefix;               // what remains of it on screen
+        bool prefixTransformApplied = false; // what that syllable reported when committed
+        bool learnable = false;              // started within kRetypeWindowMs of the last commit
     };
 
     // The last AutoCorrect on screen, kept until the next key: Backspace/Ctrl+Z undoes it.
@@ -201,6 +219,9 @@ private:
     std::vector<Span> spans_;
     std::optional<Retype> retype_;
     bool uncertain_ = false; // deleted into text we never saw: next commit is a fragment
+    // Set when the engine restores raw keys at a boundary; consumed by the commit that
+    // follows in the same key.
+    std::u32string restoredFrom_;
     std::optional<AppliedCorrection> lastCorrection_;
     std::vector<RecentCorrection> recent_; // ring, oldest first
     std::size_t recentNext_ = 0;
@@ -210,6 +231,8 @@ private:
     bool popupSuppressed_ = false;  // Esc pressed: no popup until this syllable ends
     bool swallowNextKeyUp_ = false; // key-up of a swallowed popup key must not leak either
     std::atomic<bool> vietnameseEnabled_{true};
+    std::atomic<bool> selectWithDigits_{false};
+    std::atomic<bool> selectWithEnter_{false};
     Stats stats_;
 };
 

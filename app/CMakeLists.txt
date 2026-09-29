@@ -25,6 +25,7 @@ set_source_files_properties(lankey.rc PROPERTIES OBJECT_DEPENDS
 add_executable(lankey WIN32
     main.cpp
     App.cpp
+    SnippetSource.cpp
     Log.cpp
     lankey.rc
 )

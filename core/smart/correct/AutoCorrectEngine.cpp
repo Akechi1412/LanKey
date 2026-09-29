@@ -158,6 +158,24 @@ std::optional<Correction> AutoCorrectEngine::check(const SyllableCommitted& comm
     if (s.text.empty() || !text::isAllLetters(s.text)) return std::nullopt;
     if (isAllCaps(s.typed)) return std::nullopt;
 
+    // The user's own glossary outranks every repair below it. A term written into
+    // dictionary.csv is a word they declared exists - a product name, a client's jargon,
+    // a proper noun - and the base dictionary is closed, so it will never contain those.
+    // Without this the two features fight: the glossary puts the term on screen and
+    // AutoCorrect rewrites it into the nearest real syllable.
+    if (const auto glossary = conversions_.load()) {
+        static thread_local std::vector<std::u32string> tail;
+        tail.clear();
+        const std::size_t take =
+            std::min<std::size_t>(window.size(), convert::ConversionIndex::kMaxSyllables);
+        for (std::size_t i = window.size() - take; i < window.size(); ++i)
+            tail.push_back(window[i].text);
+        for (const auto language :
+             {model::Language::Vietnamese, model::Language::English, model::Language::Japanese}) {
+            if (glossary->lookupTyped(language, tail).entry != nullptr) return std::nullopt;
+        }
+    }
+
     const auto snap = snapshot_.load();
     static thread_local std::u32string key;
     const std::size_t maxContext = std::min(window.size(), kMaxRuleSyllables);

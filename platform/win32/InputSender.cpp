@@ -54,11 +54,17 @@ void appendChar(std::vector<INPUT>& out, char32_t cp) {
 void InputSender::apply(const core::model::TextReplacement& replacement) {
     std::vector<INPUT> inputs;
     inputs.reserve(static_cast<std::size_t>(replacement.deleteCount) * 2 +
-                   replacement.insert.size() * 2);
+                   replacement.insert.size() * 2 +
+                   static_cast<std::size_t>(replacement.caretLeft) * 2);
     for (int i = 0; i < replacement.deleteCount; ++i)
         appendPress(inputs, VK_BACK);
     for (const char32_t cp : replacement.insert)
         appendChar(inputs, cp);
+    // {cursor}: no caret API reaches every application, so walk back with arrow keys the
+    // way the user would. Sent in the same batch, after the text, so nothing can type
+    // itself in between.
+    for (int i = 0; i < replacement.caretLeft; ++i)
+        appendPress(inputs, VK_LEFT);
     if (inputs.empty()) return;
 
     if (strategy_.load() == Strategy::Batch) {

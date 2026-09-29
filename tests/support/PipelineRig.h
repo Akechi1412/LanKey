@@ -3,6 +3,7 @@
 #include <string_view>
 #include <vector>
 
+#include "core/interfaces/ISnippetSource.h"
 #include "core/interfaces/ISuggestionProvider.h"
 #include "core/interfaces/IVietnameseEngine.h"
 #include "core/pipeline/InputPipeline.h"
@@ -21,9 +22,10 @@ namespace lankey::tests {
 class PipelineRig {
 public:
     explicit PipelineRig(core::IVietnameseEngine& engine,
-                         const core::ISuggestionProvider* suggestions = nullptr)
+                         const core::ISuggestionProvider* suggestions = nullptr,
+                         const core::ISnippetSource* snippets = nullptr)
         : pipeline_(
-              {engine, sink, focus, clock, suggestions},
+              {engine, sink, focus, clock, suggestions, snippets},
               core::pipeline::InputPipeline::Handlers{
                   [this](core::model::SyllableCommitted&& c) { commits.push_back(std::move(c)); },
                   [this](const core::pipeline::PopupState& p) { popups.push_back(p); },

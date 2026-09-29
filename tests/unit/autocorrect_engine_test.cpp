@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/convert/ConversionIndex.h"
 #include "core/model/Thresholds.h"
 #include "core/smart/correct/AutoCorrectEngine.h"
 
@@ -68,6 +69,14 @@ protected:
                  const std::vector<std::u32string>& blacklist) {
         engine.publish(
             CorrectionSnapshot::build(entries, rules, blacklist, BaseSyllableSet::builtin(), kNow));
+    }
+
+    // The user's own VI-EN-JA glossary.
+    void publishGlossary(const std::string& csv) {
+        auto index = std::make_shared<convert::ConversionIndex>();
+        const auto r = index->load(csv);
+        EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().message);
+        engine.publishConversions(std::move(index));
     }
 
     void setLevel(AutoCorrectLevel level) {
@@ -321,4 +330,45 @@ TEST_F(AutoCorrectEngineTest, WithoutBaseIndexNothingHappens) {
 }
 
 } // namespace
+
+// --- the user's glossary is not a typo -------------------------------------------------------
+
+TEST_F(AutoCorrectEngineTest, AWordInTheUsersGlossaryIsNeverCorrected) {
+    // A term somebody wrote into dictionary.csv is a word they declared exists. The base
+    // dictionary is closed and will not contain company names, product names or jargon,
+    // so without this guard the two features fight: one puts the term on screen, the
+    // other rewrites it into the nearest real syllable.
+    setLevel(AutoCorrectLevel::Aggressive);
+    publish({entry(U"\u0111\u01b0\u1eddng", 40)}, {}, {});
+    // Without the glossary this is repaired into a real word...
+    ASSERT_TRUE(engine.check(committed({U"\u0111\u01b0\u1edfng"})).has_value());
+    // ...and once the user says it is a word of theirs, it is left exactly as typed.
+    publishGlossary("vi,en,ja,note\n\u0111\u01b0\u1edfng,duong,,t\u00ean ri\u00eang\n");
+    EXPECT_FALSE(engine.check(committed({U"\u0111\u01b0\u1edfng"})).has_value())
+        << "the user declared this word";
+}
+
+TEST_F(AutoCorrectEngineTest, AMultiSyllableGlossaryTermIsNotCorrectedEither) {
+    setLevel(AutoCorrectLevel::Aggressive);
+    publishGlossary("vi,en,ja,note\nl\u1ed7i b\u1ea3o m\u1eadt,security bug,,\n");
+    // The window ends with the whole term; nothing in it may be rewritten.
+    SyllableCommitted c;
+    c.window.committed.push_back(Syllable::fromComposed(U"l\u1ed7i"));
+    c.window.committed.push_back(Syllable::fromComposed(U"b\u1ea3o"));
+    c.window.committed.push_back(Syllable::fromComposed(U"m\u1eadt"));
+    c.terminator = U' ';
+    c.vietnameseTransformApplied = true;
+    EXPECT_FALSE(engine.check(c).has_value());
+}
+
+TEST_F(AutoCorrectEngineTest, AWordOutsideTheGlossaryIsStillCorrected) {
+    // The guard must be narrow: publishing a glossary does not switch AutoCorrect off.
+    setLevel(AutoCorrectLevel::Cautious);
+    publishGlossary("vi,en,ja,note\n\u0111\u1eb7ng,dang,,\n");
+    publish({entry(U"\u0111\u01b0\u1eddng", 40)}, {}, {});
+    const auto c = engine.check(committed({U"\u0111\u01b0\u1edfng"}));
+    ASSERT_TRUE(c.has_value());
+    EXPECT_EQ(c->corrected[0].text, U"\u0111\u01b0\u1eddng");
+}
+
 } // namespace lankey::core::smart

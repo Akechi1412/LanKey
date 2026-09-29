@@ -2,10 +2,12 @@
 
 #include <atomic>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,7 +38,7 @@ constexpr UINT kMsgDictionary = WM_APP + 24;   // lParam = vector<DictionaryEntr
 constexpr UINT kMsgStats = WM_APP + 25;        // lParam = StatsBundle* (owned)
 constexpr UINT kMsgShowSettings = WM_APP + 26; // from a second lankey.exe: open Settings
 constexpr UINT kMsgHotkey = WM_APP + 27;       // wParam = HotkeyAction, from the hook thread
-constexpr UINT kMsgSettingsFile = WM_APP + 28; // settings.json was written (watcher thread)
+constexpr UINT kMsgSettingsFile = WM_APP + 28;
 constexpr const wchar_t* kVersion = L"0.1.0-alpha";
 constexpr const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr const wchar_t* kRunValue = L"LanKey";
@@ -50,6 +52,10 @@ constexpr UINT_PTR kNoticeTimer = 2;
 // An editor saves by writing a temporary file and renaming it: several notifications per
 // save, and the file may be briefly incomplete. Settle before reading it.
 constexpr UINT_PTR kSettingsFileTimer = 3;
+constexpr UINT_PTR kSnippetInsertTimer = 6;
+// Long enough for the window the picker took the focus from to finish activating, short
+// enough that the snippet still feels like it appeared on Enter.
+constexpr UINT kSnippetSettleMs = 80;
 constexpr UINT kSettingsFileSettleMs = 250;
 
 std::filesystem::path appDataDir() {
@@ -174,7 +180,7 @@ bool App::initialise(HINSTANCE instance) {
         if (!PostMessageW(uiWindow_, kMsgPopup, 0, reinterpret_cast<LPARAM>(copy))) delete copy;
     };
     pipeline_ = std::make_unique<InputPipeline>(
-        InputPipeline::Dependencies{engine_, sender_, focus_, clock_, &suggestions_},
+        InputPipeline::Dependencies{engine_, sender_, focus_, clock_, &suggestions_, &snippets_},
         std::move(handlers));
     pipeline_->setVietnameseEnabled(settings_.vietnameseEnabled);
 
@@ -183,6 +189,16 @@ bool App::initialise(HINSTANCE instance) {
     // Started after the UI window exists - that is where the notification is delivered.
     settingsWatcher_.start(dataDir_, L"settings.json",
                            [this] { PostMessageW(uiWindow_, kMsgSettingsFile, 0, 0); });
+    // The glossary and the snippets live in settings.json now, so the watcher that is
+    // already running on that file covers them too - one file, one watcher, one save.
+    if (settings_.schemaVersion < core::model::Settings::kSchemaVersion) {
+        if (settings_.glossary.empty() && settings_.snippets.items.empty()) importLegacyFiles();
+        if (settings_.glossary.empty() && settings_.snippets.items.empty()) seedStarterContent();
+        settings_.schemaVersion = core::model::Settings::kSchemaVersion;
+        saveSettings();
+    }
+    applyGlossary();
+    applySnippets();
 
     ui::win32::TrayIcon::Callbacks tray;
     tray.onToggleVietnamese = [this] { applyVietnameseEnabled(!pipeline_->vietnameseEnabled()); };
@@ -301,9 +317,14 @@ void App::shutdown() {
     hook_.stop();
     focus_.uninstall();
     if (worker_) worker_->stop();
+    snippetPicker_.destroy();
     popup_.destroy();
     tray_.destroy();
     if (uiWindow_ != nullptr) {
+        if (clipboardListener_) {
+            RemoveClipboardFormatListener(uiWindow_);
+            clipboardListener_ = false;
+        }
         DestroyWindow(uiWindow_);
         uiWindow_ = nullptr;
     }
@@ -365,6 +386,11 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             KillTimer(uiWindow_, kSettingsFileTimer);
             onSettingsFileChanged();
         }
+        if (wParam == kSnippetInsertTimer) {
+            KillTimer(uiWindow_, kSnippetInsertTimer);
+            insertSnippet(pendingSnippet_);
+            pendingSnippet_.clear();
+        }
         return 0;
     case kMsgLanguage:
         // Ctrl+Shift on the hook thread already flipped the pipeline; mirror it here and
@@ -407,6 +433,9 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         // Restart the timer on every notification: one save produces several.
         SetTimer(uiWindow_, kSettingsFileTimer, kSettingsFileSettleMs, nullptr);
         return 0;
+    case WM_CLIPBOARDUPDATE:
+        onClipboardChanged();
+        return 0;
     case kMsgEraseDone:
         tray_.showBalloon(L"LanKey", wParam != 0 ? L"Đã xoá toàn bộ dữ liệu đã học."
                                                  : L"Không xoá được dữ liệu - xem lankey.log.");
@@ -444,7 +473,27 @@ void App::showPopup(const PopupState& state) {
         return;
     }
     KillTimer(uiWindow_, kIdleTimer);
-    popup_.show(state.items, state.selected, caret_.resolve());
+    // Nothing on screen is taking these keystrokes: the user clicked out of the text box
+    // and the focus fell back to something read-only (in a browser, the page itself).
+    // Checked here rather than earlier because this is the one place every list passes
+    // through - the ones that wait for the idle timer and the glossary and snippet rows
+    // that appear at once. The pipeline is told as well, or it would go on swallowing Tab
+    // for a popup nobody can see.
+    const auto focus = caret_.textFocus();
+    if (focus == platform::win32::CaretResolver::TextFocus::NotText) {
+        logf("popup: suppressed, focus takes no text (type %d) in %s", caret_.lastControlType(),
+             focusedApp_.c_str());
+        hook_.post([this] { pipeline_->dismissPopup(); });
+        return;
+    }
+    const auto caret = caret_.resolve();
+    if (!caret) {
+        // Only the anomaly is worth a line: no caret means the popup lands in a screen
+        // corner instead of next to the text. A line per popup would say nothing.
+        logf("popup: no caret in %s (focus %s)", focusedApp_.c_str(),
+             platform::win32::CaretResolver::focusName(focus));
+    }
+    popup_.show(state.items, state.selected, caret);
 }
 
 void App::onIdleTimer() {
@@ -541,6 +590,45 @@ void App::openDataFolder() {
     ShellExecuteW(nullptr, L"open", dataDir_.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+// Replaces the selection with its `target` column from the user's glossary. One of these
+// per language: the user says which one they want, rather than pressing a cycling key
+// until the right language comes round.
+void App::convertSelectionTo(core::model::Language target) {
+    using Result = platform::win32::SelectionTransformer::Result;
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const ULONGLONG started = GetTickCount64();
+    const Result r = selection_.transform(
+        [this, target](std::u32string_view s) -> std::optional<std::u32string> {
+            // Trim what a double click usually takes with the word.
+            std::u32string_view word = s;
+            while (!word.empty() && (word.front() == U' ' || word.front() == U'\n'))
+                word.remove_prefix(1);
+            while (!word.empty() && (word.back() == U' ' || word.back() == U'\n'))
+                word.remove_suffix(1);
+            if (!conversions_) return std::nullopt;
+            const auto found = conversions_->translate(word, target);
+            if (!found.found()) return std::nullopt;
+            return found.text;
+        });
+    const wchar_t* chip = target == core::model::Language::Japanese ? L"JA" : L"EN";
+    if (r == Result::Replaced) {
+        toast_.showText(instance, chip, ui::win32::kBrandVietnamese,
+                        L"Đã chuyển theo từ điển của bạn");
+    } else if (r == Result::NoSelection) {
+        toast_.showText(instance, L"!", ui::win32::kBrandEnglish, L"Hãy bôi đen văn bản trước");
+    } else if (r == Result::Unchanged) {
+        // Covers all three "nothing to do" cases: not in the glossary, that row has no
+        // such column, or the selection already is that language.
+        toast_.showText(instance, L"?", ui::win32::kBrandEnglish,
+                        target == core::model::Language::Japanese
+                            ? L"Từ điển của bạn chưa có tiếng Nhật cho từ này"
+                            : L"Từ điển của bạn chưa có tiếng Anh cho từ này");
+    }
+    logf("hotkey: convert to %s -> %d in %llu ms",
+         target == core::model::Language::Japanese ? "ja" : "en", static_cast<int>(r),
+         static_cast<unsigned long long>(GetTickCount64() - started));
+}
+
 void App::onHotkey(core::model::HotkeyAction action) {
     using core::model::HotkeyAction;
     using Result = platform::win32::SelectionTransformer::Result;
@@ -567,9 +655,16 @@ void App::onHotkey(core::model::HotkeyAction action) {
              static_cast<unsigned long long>(GetTickCount64() - started));
         return;
     }
-    case HotkeyAction::ConvertLanguage:
-    case HotkeyAction::ClipboardHistory:
+    case HotkeyAction::ConvertEnglish:
+        convertSelectionTo(core::model::Language::English);
+        return;
+    case HotkeyAction::ConvertJapanese:
+        convertSelectionTo(core::model::Language::Japanese);
+        return;
     case HotkeyAction::SnippetPicker:
+        showSnippetPicker();
+        return;
+    case HotkeyAction::ClipboardHistory:
         toast_.showText(instance, L"…", ui::win32::kBrandEnglish,
                         L"Tính năng này đang được phát triển");
         return;
@@ -656,20 +751,211 @@ std::optional<EditorLaunch> findCodeEditor() {
 
 } // namespace
 
-void App::openSettingsFile() {
-    saveSettings(); // make sure the file reflects what is running before the user edits it
-    const std::wstring path = (dataDir_ / L"settings.json").wstring();
-    const std::wstring quoted = L"\"" + path + L"\"";
+// Builds the glossary index from settings_ and publishes it to everything that reads it.
+// Called at startup and after any change, whoever made it - the settings window, or the
+// user editing settings.json in their editor.
+void App::applyGlossary() {
+    auto next = std::make_shared<core::convert::ConversionIndex>();
+    next->load(settings_.glossary);
+    logf("glossary: %zu of %zu rows usable", next->size(), settings_.glossary.size());
+    // Published, not mutated: the hook thread may be reading the previous index right now.
+    suggestions_.publishConversions(next);
+    // The corrector needs it too, for the opposite reason: a term the user declared is
+    // never a typo to repair.
+    corrector_.publishConversions(next);
+    conversions_ = std::move(next);
+    publishGlossaryToWindow();
+}
 
-    // A code editor first: this is JSON, and the point of the button is editing it. Then
-    // whatever is associated with .json, and Notepad as the last resort (a bare
-    // ShellExecute on an unassociated file only pops the "How do you want to open" picker).
+// Hands the glossary rows to the settings window, if it is open. The rows come from
+// settings_ rather than from the index so that a row the index dropped - one the user has
+// only half filled in - is still there to finish.
+void App::publishGlossaryToWindow() {
+    std::vector<ui::win32::SettingsWindow::GlossaryRow> rows;
+    rows.reserve(settings_.glossary.size());
+    for (const auto& e : settings_.glossary) {
+        rows.push_back({platform::win32::fromUtf8(e.vi), platform::win32::fromUtf8(e.en),
+                        platform::win32::fromUtf8(e.ja), platform::win32::fromUtf8(e.note)});
+    }
+    settingsWindow_.setGlossary(std::move(rows));
+}
+
+// The same for the snippets, plus the one side effect they have: whether the clipboard
+// needs watching.
+void App::applySnippets() {
+    auto next = std::make_shared<core::snippet::SnippetIndex>();
+    next->load(settings_.snippets);
+    logf("snippets: %zu of %zu usable", next->size(), settings_.snippets.items.size());
+    const bool wantsClipboard = next->usesClipboard();
+    snippets_.publish(std::move(next));
+
+    // The clipboard is watched only while a snippet actually asks for one. It holds
+    // passwords often enough that keeping a copy should be something the user asked for,
+    // not something LanKey does by default.
+    if (wantsClipboard != clipboardListener_ && uiWindow_ != nullptr) {
+        if (wantsClipboard) {
+            clipboardListener_ = AddClipboardFormatListener(uiWindow_) != 0;
+        } else {
+            RemoveClipboardFormatListener(uiWindow_);
+            clipboardListener_ = false;
+            snippets_.setClipboard({}); // and drop what was already held
+        }
+        logf("snippets: clipboard watch %s", clipboardListener_ ? "on" : "off");
+    }
+    if (clipboardListener_) onClipboardChanged(); // seed with whatever is on it now
+    publishSnippetsToWindow();
+}
+
+// Hands the abbreviations to the settings window, if it is open.
+void App::publishSnippetsToWindow() {
+    std::vector<ui::win32::SettingsWindow::SnippetRow> rows;
+    rows.reserve(settings_.snippets.items.size());
+    for (const auto& e : settings_.snippets.items) {
+        rows.push_back(
+            {platform::win32::fromUtf8(e.abbr), platform::win32::fromUtf8(e.body), e.autoExpand});
+    }
+    settingsWindow_.setSnippets(std::move(rows));
+
+    std::vector<std::pair<std::wstring, std::wstring>> variables;
+    variables.reserve(settings_.snippets.variables.size());
+    for (const auto& [name, value] : settings_.snippets.variables) {
+        variables.emplace_back(platform::win32::fromUtf8(name), platform::win32::fromUtf8(value));
+    }
+    settingsWindow_.setSnippetVariables(std::move(variables));
+}
+
+// The clipboard changed and some snippet uses {clipboard}. Read it here, on the UI thread,
+// and hand the hook thread a copy: opening the clipboard from inside the keyboard hook
+// would make a keystroke wait on whichever process happens to hold it.
+void App::onClipboardChanged() {
+    if (!clipboardListener_) return;
+    // Password managers mark their entries so the clipboard history skips them. If they
+    // went to that trouble, LanKey keeps no copy either.
+    static const UINT kExcluded =
+        RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing");
+    if (kExcluded != 0 && IsClipboardFormatAvailable(kExcluded) != 0) {
+        snippets_.setClipboard({});
+        return;
+    }
+    const auto text = platform::win32::SelectionTransformer::readClipboardText();
+    snippets_.setClipboard(text ? platform::win32::fromUtf16(*text) : std::u32string{});
+}
+
+// Older versions kept these in dictionary.csv and snippets.json. Read them once, into
+// settings.json, and leave the files where they are: they are the user's copy of their own
+// words, and deleting them to celebrate a file format change would be rude.
+//
+// Guarded by schemaVersion, not by "is the list empty": a user who deleted every row is
+// not a user who wants them all back on the next start.
+void App::importLegacyFiles() {
+    const auto readFile = [](const std::filesystem::path& path) -> std::optional<std::string> {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return std::nullopt;
+        std::stringstream buf;
+        buf << in.rdbuf();
+        return buf.str();
+    };
+
+    if (const auto csv = readFile(dataDir_ / L"dictionary.csv")) {
+        core::convert::ConversionIndex index;
+        if (const auto r = index.load(*csv); r) {
+            index.forEach([&](const core::convert::Entry& e) {
+                settings_.glossary.push_back({core::text::toUtf8(e.vi), core::text::toUtf8(e.en),
+                                              core::text::toUtf8(e.ja),
+                                              core::text::toUtf8(e.note)});
+            });
+            logf("import: %zu glossary rows from dictionary.csv", settings_.glossary.size());
+        } else {
+            logf("import: dictionary.csv unreadable (%s)", r.error().message.c_str());
+        }
+    }
+    if (const auto json = readFile(dataDir_ / L"snippets.json")) {
+        core::snippet::SnippetIndex index;
+        if (const auto r = index.load(*json); r) {
+            for (const auto& [name, value] : index.variables()) {
+                settings_.snippets.variables.emplace_back(core::text::toUtf8(name),
+                                                          core::text::toUtf8(value));
+            }
+            index.forEach([&](const core::snippet::Snippet& s) {
+                settings_.snippets.items.push_back(
+                    {core::text::toUtf8(s.abbr), core::text::toUtf8(s.body), s.autoExpand});
+            });
+            logf("import: %zu snippets from snippets.json", settings_.snippets.items.size());
+        } else {
+            logf("import: snippets.json unreadable (%s)", r.error().message.c_str());
+        }
+    }
+}
+
+// What a brand-new install starts with, so neither feature looks broken on first sight.
+void App::seedStarterContent() {
+    settings_.glossary = {
+        {"đăng nhập", "login", "ログイン", ""},
+        {"lỗi", "bug", "バグ", ""},
+        {"kiểm thử", "test", "テスト", ""},
+    };
+    settings_.snippets.variables = {{"email", "ban@congty.com"}, {"ten", "Tên của bạn"}};
+    settings_.snippets.items = {
+        {"ce", "{email}", false},
+        {"nay", "{date}", false},
+        {"gio", "{time}", false},
+        {"todo", "// TODO({ten} {date}): {cursor}", false},
+        {"tks", "Cảm ơn bạn,\n{ten}", false},
+    };
+}
+
+// Ctrl+Alt+S: the abbreviations by name, for when the abbreviation is what you forgot.
+void App::showSnippetPicker() {
+    const auto index = snippets_.index();
+    if (!index || index->size() == 0) {
+        toast_.showText(GetModuleHandleW(nullptr), L"…", ui::win32::kBrandEnglish,
+                        L"Chưa có đoạn gõ tắt nào");
+        return;
+    }
+    std::vector<ui::win32::SnippetPicker::Item> items;
+    index->forEach([&](const core::snippet::Snippet& s) {
+        items.push_back({platform::win32::toUtf16(s.abbr),
+                         platform::win32::toUtf16(core::snippet::firstLine(s.body))});
+    });
+    ui::win32::SnippetPicker::Callbacks cb;
+    cb.onChoose = [this](const std::wstring& abbr) {
+        // Not inserted here: the focus has only just been handed back and the window it
+        // went to has not finished activating. A short timer lets the message loop keep
+        // running while that settles, which a Sleep on this thread would not.
+        pendingSnippet_ = abbr;
+        SetTimer(uiWindow_, kSnippetInsertTimer, kSnippetSettleMs, nullptr);
+    };
+    snippetPicker_.show(GetModuleHandleW(nullptr), std::move(items), std::move(cb));
+}
+
+// Sends a snippet body to whatever now has the focus. Nothing is deleted: unlike the
+// typing path there is no abbreviation on screen to replace.
+void App::insertSnippet(const std::wstring& abbr) {
+    const auto rendered = snippets_.expand(platform::win32::fromUtf16(abbr));
+    if (!rendered) return;
+    core::model::TextReplacement cmd;
+    cmd.insert = rendered->text;
+    cmd.caretLeft = rendered->cursorOffsetFromEnd;
+    cmd.reason = core::model::ReplacementReason::Macro;
+    sender_.apply(cmd);
+    // The length, not the abbreviation: DATA-POLICY promises this file never holds what
+    // the user wrote, and an abbreviation is something they wrote.
+    logf("snippets: inserted %zu chars", rendered->text.size());
+}
+
+// A code editor first: these are text files the user is meant to edit. Then whatever is
+// associated with the extension, and Notepad as the last resort (a bare ShellExecute on an
+// unassociated file only pops the "How do you want to open" picker).
+void App::openFileInEditor(const std::filesystem::path& file) {
+    const std::wstring path = file.wstring();
+    const std::wstring quoted = L"\"" + path + L"\"";
     if (const auto editor = findCodeEditor()) {
         const auto rc = reinterpret_cast<INT_PTR>(
             ShellExecuteW(nullptr, L"open", editor->command.c_str(), quoted.c_str(), nullptr,
                           editor->console ? SW_HIDE : SW_SHOWNORMAL));
-        logf("settings: open file (%s) -> %lld", platform::win32::toUtf8(editor->command).c_str(),
-             static_cast<long long>(rc));
+        logf("open file %s (%s) -> %lld",
+             platform::win32::toUtf8(file.filename().wstring()).c_str(),
+             platform::win32::toUtf8(editor->command).c_str(), static_cast<long long>(rc));
         if (rc > 32) return;
     }
     wchar_t exe[MAX_PATH] = {};
@@ -679,8 +965,13 @@ void App::openSettingsFile() {
         associated ? ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL)
                    : ShellExecuteW(nullptr, L"open", L"notepad.exe", quoted.c_str(), nullptr,
                                    SW_SHOWNORMAL));
-    logf("settings: open file (%s) -> %lld", associated ? "associated editor" : "notepad",
-         static_cast<long long>(rc));
+    logf("open file %s (%s) -> %lld", platform::win32::toUtf8(file.filename().wstring()).c_str(),
+         associated ? "associated editor" : "notepad", static_cast<long long>(rc));
+}
+
+void App::openSettingsFile() {
+    saveSettings(); // make sure the file reflects what is running before the user edits it
+    openFileInEditor(dataDir_ / L"settings.json");
 }
 
 void App::reloadSettingsFile() {
@@ -721,6 +1012,42 @@ void App::showSettings() {
     ui::win32::SettingsWindow::Callbacks cb;
     cb.onApply = [this](const core::model::Settings& next) { applySettings(next); };
     cb.onLoadDictionary = [this] { loadDictionaryAsync(); };
+    cb.onGlossaryEdited = [this](std::vector<ui::win32::SettingsWindow::GlossaryRow> rows) {
+        settings_.glossary.clear();
+        settings_.glossary.reserve(rows.size());
+        for (const auto& r : rows) {
+            settings_.glossary.push_back(
+                {platform::win32::toUtf8(r.vi), platform::win32::toUtf8(r.en),
+                 platform::win32::toUtf8(r.ja), platform::win32::toUtf8(r.note)});
+        }
+        // Rebuilt and saved on the spot. A term is added because it is about to be used.
+        applyGlossary();
+        saveSettings();
+    };
+    cb.onSnippetsEdited = [this](std::vector<ui::win32::SettingsWindow::SnippetRow> rows) {
+        settings_.snippets.items.clear();
+        settings_.snippets.items.reserve(rows.size());
+        for (const auto& r : rows) {
+            settings_.snippets.items.push_back(
+                {platform::win32::toUtf8(r.abbr), platform::win32::toUtf8(r.body), r.autoExpand});
+        }
+        applySnippets();
+        saveSettings();
+    };
+    cb.onVariablesEdited = [this](std::vector<std::pair<std::wstring, std::wstring>> rows) {
+        settings_.snippets.variables.clear();
+        settings_.snippets.variables.reserve(rows.size());
+        for (const auto& [name, value] : rows) {
+            settings_.snippets.variables.emplace_back(platform::win32::toUtf8(name),
+                                                      platform::win32::toUtf8(value));
+        }
+        // Sorted by name, the way settings.json stores them: a save must not reshuffle the
+        // file, and the user's typing order carries no meaning here.
+        std::sort(settings_.snippets.variables.begin(), settings_.snippets.variables.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        applySnippets();
+        saveSettings();
+    };
     cb.onRemoveEntries = [this](std::vector<std::wstring> phrases) {
         worker_->withStore([phrases = std::move(phrases)](core::ILexiconStore& store) {
             std::vector<std::u32string> keys;

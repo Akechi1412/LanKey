@@ -10,6 +10,8 @@ namespace {
 constexpr wchar_t kClassName[] = L"LanKeySuggestionPopup";
 // Layout in 96-dpi pixels; everything is scaled by the window's DPI.
 constexpr int kPaddingX = 14;
+constexpr int kChipPadX = 5; // inside the language pill
+constexpr int kChipGap = 6;  // between the pill and the phrase
 constexpr int kRowPaddingY = 7;
 constexpr int kAccentWidth = 3;
 constexpr int kGapFromCaret = 6;
@@ -75,8 +77,16 @@ void SuggestionPopup::show(const core::model::SuggestionList& items, int selecte
         const std::u32string joined = s.phrase.joined();
         const std::size_t insertLen = s.insert.size();
         const std::size_t contextLen = joined.size() >= insertLen ? joined.size() - insertLen : 0;
-        rows_.push_back(
-            {toWide(std::u32string_view(joined).substr(0, contextLen)), toWide(s.insert)});
+        std::wstring chip;
+        if (s.kind == core::model::Suggestion::Kind::Conversion) {
+            chip = s.language == core::model::Language::English    ? L"EN"
+                   : s.language == core::model::Language::Japanese ? L"JA"
+                                                                   : L"VI";
+        } else if (s.kind == core::model::Suggestion::Kind::Snippet) {
+            chip = L"⇥"; // the Tab key: what puts the body on screen
+        }
+        rows_.push_back({toWide(std::u32string_view(joined).substr(0, contextLen)),
+                         toWide(s.insert), std::move(chip)});
     }
     selected_ = std::clamp(selected, 0, static_cast<int>(rows_.size()) - 1);
     notice_ = false;
@@ -92,7 +102,7 @@ void SuggestionPopup::showNotice(const std::u32string& text,
                                  const std::optional<core::model::ScreenRect>& caret) {
     if (hwnd_ == nullptr) return;
     rows_.clear();
-    rows_.push_back({toWide(text), toWide(U"   \u232b ho\u00e0n t\u00e1c")});
+    rows_.push_back({toWide(text), toWide(U"   \u232b ho\u00e0n t\u00e1c"), {}});
     selected_ = -1;
     notice_ = true;
     layout(caret);
@@ -152,6 +162,11 @@ void SuggestionPopup::layout(const std::optional<core::model::ScreenRect>& caret
         SIZE b{};
         GetTextExtentPoint32W(dc, row.context.c_str(), static_cast<int>(row.context.size()), &a);
         GetTextExtentPoint32W(dc, row.insert.c_str(), static_cast<int>(row.insert.size()), &b);
+        if (!row.chip.empty()) {
+            SIZE c{};
+            GetTextExtentPoint32W(dc, row.chip.c_str(), static_cast<int>(row.chip.size()), &c);
+            a.cx += c.cx + 2 * px(kChipPadX) + px(kChipGap);
+        }
         widest = (std::max)(widest, static_cast<int>(a.cx + b.cx));
     }
     SelectObject(dc, old);
@@ -244,6 +259,28 @@ void SuggestionPopup::paint() {
             DrawTextW(dc, r.insert.c_str(), static_cast<int>(r.insert.size()), &text,
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
             continue;
+        }
+        if (!r.chip.empty()) {
+            // A filled pill in the accent colour: the row is not a guess, it is a line the
+            // user wrote in their glossary, and it says which column it came from.
+            SIZE size{};
+            GetTextExtentPoint32W(dc, r.chip.c_str(), static_cast<int>(r.chip.size()), &size);
+            const int w = size.cx + 2 * px(kChipPadX);
+            const int h = size.cy + px(2);
+            RECT pill{text.left, (row.top + row.bottom - h) / 2, text.left + w,
+                      (row.top + row.bottom + h) / 2};
+            const HBRUSH fill = CreateSolidBrush(kPopupPalette.accent);
+            const HGDIOBJ oldBrush = SelectObject(dc, fill);
+            const HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+            const int radius = px(6);
+            RoundRect(dc, pill.left, pill.top, pill.right + 1, pill.bottom + 1, radius, radius);
+            SelectObject(dc, oldBrush);
+            SelectObject(dc, oldPen);
+            DeleteObject(fill);
+            SetTextColor(dc, kPopupPalette.background);
+            DrawTextW(dc, r.chip.c_str(), static_cast<int>(r.chip.size()), &pill,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            text.left += w + px(kChipGap);
         }
         if (!r.context.empty()) {
             SetTextColor(dc, kPopupPalette.textDim);

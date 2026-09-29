@@ -17,7 +17,7 @@ CloseAllMsgBoxes
 $s = Settings
 if ($s -eq [IntPtr]::Zero) { $s = OpenSettings }
 $d = Dialog
-if ($d -eq [IntPtr]::Zero -or -not [UI]::IsWindowVisible($d)) { SelectNav $s 0; Click $s 105; Start-Sleep -Milliseconds 500; $d = Dialog }
+if ($d -eq [IntPtr]::Zero -or -not [UI]::IsWindowVisible($d)) { SelectPage $s "Kiểu gõ"; Click $s 105; Start-Sleep -Milliseconds 500; $d = Dialog }
 Check "dialog opens" ($d -ne [IntPtr]::Zero -and [UI]::IsWindowVisible($d))
 Check "owner disabled while dialog up" (-not [UI]::IsWindowEnabled($s))
 
@@ -64,13 +64,13 @@ Click $s 108; $j = JsonWhen { param($j) $j.engine.codeTable -eq "tcvn3" }; Check
 Click $s 106; $j = JsonWhen { param($j) $j.engine.codeTable -eq "unicode" }; Check "code table Unicode" ($j.engine.codeTable -eq "unicode") $j.engine.codeTable
 Shot $s "$out\page-typing.png" | Out-Null
 
-SelectNav $s 1
+SelectPage $s "Tuỳ chọn gõ"
 $before = (Json).engine.modernToneMark
 Click $s 111; $j = JsonWhen { param($j) $j.engine.modernToneMark -ne $before }; Check "checkbox modern tone toggles" ($j.engine.modernToneMark -ne $before) "$before -> $($j.engine.modernToneMark)"
 Click $s 111; $j = JsonWhen { param($j) $j.engine.modernToneMark -eq $before }; Check "checkbox toggles back" ($j.engine.modernToneMark -eq $before)
 Shot $s "$out\page-options.png" | Out-Null
 
-SelectNav $s 2
+SelectPage $s "Gợi ý & Tự sửa"
 Check "select-with-Enter defaults to off" ((Json).suggestions.selectWithEnter -eq $false) "$((Json).suggestions.selectWithEnter)"
 Click $s 210; $j = JsonWhen { param($j) $j.suggestions.selectWithEnter -eq $true }; Check "select-with-Enter on" ($j.suggestions.selectWithEnter -eq $true) "$($j.suggestions.selectWithEnter)"
 Click $s 210; $j = JsonWhen { param($j) $j.suggestions.selectWithEnter -eq $false }; Check "select-with-Enter off again" ($j.suggestions.selectWithEnter -eq $false) "$($j.suggestions.selectWithEnter)"
@@ -79,25 +79,25 @@ Click $s 205; $j = JsonWhen { param($j) $j.autoCorrect.level -eq "cautious" }; C
 Click $s 209                                   # refresh recent
 Shot $s "$out\page-smart.png" | Out-Null
 
-SelectNav $s 3; SetText $s 300 "a"; Start-Sleep -Milliseconds 300; Click $s 310; Start-Sleep -Milliseconds 800
+SelectPage $s "Cụm từ đã học"; SetText $s 300 "a"; Start-Sleep -Milliseconds 300; Click $s 310; Start-Sleep -Milliseconds 800
 Shot $s "$out\page-dictionary.png" | Out-Null
-SelectNav $s 4; Shot $s "$out\page-privacy.png" | Out-Null
+SelectPage $s "Quyền riêng tư"; Shot $s "$out\page-privacy.png" | Out-Null
 Click $s 404; Start-Sleep -Milliseconds 600; $dd = Win "LanKeyDataDialog"
 Check "data dialog opens" ($dd -ne [IntPtr]::Zero -and [UI]::IsWindowVisible($dd))
 if ($dd -ne [IntPtr]::Zero) { Shot $dd "$out\data-dialog.png" | Out-Null; [void][UI]::SendMessageW($dd, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) }
-SelectNav $s 5; Shot $s "$out\page-shortcuts.png" | Out-Null
-SelectNav $s 6; Click $s 504; Start-Sleep -Milliseconds 500; Shot $s "$out\page-advanced.png" | Out-Null
-SelectNav $s 7; Shot $s "$out\page-about.png" | Out-Null
+SelectPage $s "Phím tắt"; Shot $s "$out\page-shortcuts.png" | Out-Null
+SelectPage $s "Nâng cao"; Click $s 504; Start-Sleep -Milliseconds 500; Shot $s "$out\page-advanced.png" | Out-Null
+SelectPage $s "Giới thiệu"; Shot $s "$out\page-about.png" | Out-Null
 
 # ---- settings.json round trip ---------------------------------------------------------------
-SelectNav $s 6
+SelectPage $s "Nâng cao"
 $logBefore = (Get-Content "$env:APPDATA\LanKey\lankey.log").Count
 Click $s 506; Start-Sleep -Milliseconds 2500
 # Which editor opens depends on the machine (a code editor if one is installed, else the
 # .json association, else Notepad), so check what the app itself reports: a ShellExecute
 # result above 32 means it launched.
 $opened = (Get-Content "$env:APPDATA\LanKey\lankey.log") | Select-Object -Skip $logBefore |
-    Select-String "settings: open file" | Select-Object -Last 1
+    Select-String "open file settings.json" | Select-Object -Last 1
 $rc = 0
 if ($opened -and $opened.Line -match "-> (\d+)$") { $rc = [int]$Matches[1] }
 Check "open settings.json launches an editor" ($rc -gt 32) "$($opened.Line)"
@@ -106,9 +106,9 @@ if ($np) { $np | Stop-Process -Force }   # close Notepad only, never the user's 
 $raw = Get-Content "$env:APPDATA\LanKey\settings.json" -Raw -Encoding UTF8
 $raw2 = $raw -replace '"idleDelayMs":\s*\d+', '"idleDelayMs": 444'
 WriteSettings $raw2
-SelectNav $s 2
+SelectPage $s "Gợi ý & Tự sửa"
 Check "reload from file updates control" ((CtlText $s 201) -eq "444") (CtlText $s 201)
-SelectNav $s 6
+SelectPage $s "Nâng cao"
 WriteSettings "{ not json"
 Check "broken json shows no dialog" ((MsgBox) -eq [IntPtr]::Zero) "msgbox=$(MsgBox)"
 Check "broken json leaves the setting alone" ((CtlText $s 201) -eq "444") (CtlText $s 201)
@@ -134,7 +134,7 @@ Shot $s "$out\dpi120.png" | Out-Null
 # carries cleared hotkeys, and restoring it here wiped the user's real ones on every run
 # from then on (found 2026-09-25).
 WriteSettings (Get-Content "$out\settings.backup.json" -Raw -Encoding UTF8)
-SelectNav $s 5; Click $s 620   # Phim tat -> Mac dinh
+SelectPage $s "Phím tắt"; Click $s 620   # Phim tat -> Mac dinh
 Start-Sleep -Milliseconds 400
 Check "hotkeys left at defaults" ((Json).hotkeys.convertLanguage -eq "Ctrl+Alt+L") (Json).hotkeys.convertLanguage
 $results

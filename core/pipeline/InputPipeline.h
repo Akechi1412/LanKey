@@ -9,6 +9,7 @@
 
 #include "core/interfaces/IClock.h"
 #include "core/interfaces/IFocusObserver.h"
+#include "core/interfaces/ISnippetSource.h"
 #include "core/interfaces/ISuggestionProvider.h"
 #include "core/interfaces/ITextSink.h"
 #include "core/interfaces/IVietnameseEngine.h"
@@ -64,6 +65,7 @@ public:
         IFocusObserver& focus;
         IClock& clock;
         const ISuggestionProvider* suggestions = nullptr; // optional
+        const ISnippetSource* snippets = nullptr;         // optional
     };
 
     struct Handlers {
@@ -86,6 +88,7 @@ public:
         std::uint64_t correctionsUndone = 0;
         std::uint64_t correctionsDropped = 0; // stale generation or unreconstructible span
         std::uint64_t retypesDetected = 0;    // manual fixes handed to the worker
+        std::uint64_t snippetsExpanded = 0;
     };
 
     InputPipeline(Dependencies deps, Handlers handlers);
@@ -113,6 +116,11 @@ public:
     // The idle timer fired for the pending list computed at `generation`. Shows it if the
     // user has not typed since; otherwise does nothing (a newer list is pending or none).
     void promotePending(std::uint64_t generation);
+
+    // "There is nowhere to put this." Same effect as the user pressing Esc: the popup goes
+    // away and stays away until the word ends. Used when the UI finds that the keyboard is
+    // not in anything that takes text, which only that side can see.
+    void dismissPopup();
 
     // Suggestions may also be picked with the digit keys 1..5 (SuggestionSettings).
     void setSelectWithDigits(bool enabled) noexcept {
@@ -160,6 +168,10 @@ private:
                         std::uint64_t generation);
     void refreshSuggestions(std::uint64_t generation, bool afterWordBoundary);
     void selectSuggestion(std::size_t index, std::uint64_t generation);
+    void updateSnippetMatch();
+    // Puts the body of the matched snippet on screen in place of the abbreviation.
+    // False means nothing was inserted and the screen is untouched.
+    bool expandSnippet(std::uint64_t generation);
     void hidePopup();
     void clearPending();
     void resetContext();
@@ -222,6 +234,14 @@ private:
     // Set when the engine restores raw keys at a boundary; consumed by the commit that
     // follows in the same key.
     std::u32string restoredFrom_;
+    // The keys of the word being typed, exactly as pressed. Snippet abbreviations are
+    // matched against these and never against the screen: in Telex the keys "osnn" stand
+    // on screen as "ónn", and it is the keys the user chose as the trigger.
+    std::u32string rawWord_;
+    // Cleared when a Backspace deletes into finished text: what is left on screen then is
+    // a syllable whose keys this thread never knew. Matching resumes at the next word.
+    bool rawWordKnown_ = true;
+    std::optional<SnippetMatch> snippetMatch_;
     std::optional<AppliedCorrection> lastCorrection_;
     std::vector<RecentCorrection> recent_; // ring, oldest first
     std::size_t recentNext_ = 0;

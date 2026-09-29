@@ -67,6 +67,19 @@ function GetText($h) { $sb = New-Object System.Text.StringBuilder 4096; [void][U
 function CtlText($win, $id) { GetText (Ctl $win $id) }
 function Enabled($win, $id) { [UI]::IsWindowEnabled((Ctl $win $id)) }
 function SelectNav($win, $index) { $nav = Ctl $win 10; [void][UI]::SendMessageW($nav, $LB_SETCURSEL, [IntPtr]$index, [IntPtr]::Zero); [void][UI]::PostMessageW($win, $WM_COMMAND, [IntPtr](10 -bor (1 -shl 16)), $nav); Start-Sleep -Milliseconds 400 }
+# Selects a settings page by its NAME. Indices shift whenever a page is inserted, and a
+# suite that hard-codes them silently starts testing the wrong page instead of failing.
+function SelectPage($win, [string]$name) {
+    $nav = Ctl $win 10
+    $count = [int][UI]::SendMessageW($nav, 0x018B, [IntPtr]::Zero, [IntPtr]::Zero)  # LB_GETCOUNT
+    for ($i = 0; $i -lt $count; $i++) {
+        $sb = New-Object System.Text.StringBuilder 256
+        [void][UI]::SendMessageW($nav, 0x0189, [IntPtr]$i, $sb)                     # LB_GETTEXT
+        if ($sb.ToString() -eq $name) { SelectNav $win $i; return $i }
+    }
+    throw "no settings page named '$name'"
+}
+
 function ComboSelect($win, $id, $index) { $c = Ctl $win $id; [void][UI]::SendMessageW($c, $CB_SETCURSEL, [IntPtr]$index, [IntPtr]::Zero); Start-Sleep -Milliseconds 100 }
 function ListCount($win, $id) { [int][UI]::SendMessageW((Ctl $win $id), $LVM_GETITEMCOUNT, [IntPtr]::Zero, [IntPtr]::Zero) }
 function CloseMsgBox([int]$id = 1) { $m = MsgBox; if ($m -ne [IntPtr]::Zero) { $t = GetText (Ctl $m 0xFFFF); $b = Ctl $m $id; if ($b -ne [IntPtr]::Zero) { [void][UI]::PostMessageW($b, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero) } else { [void][UI]::PostMessageW($m, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) }; Start-Sleep -Milliseconds 500; return $t }; return $null }

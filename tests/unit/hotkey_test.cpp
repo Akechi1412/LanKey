@@ -38,7 +38,8 @@ TEST(Hotkey, RoundTrips) {
 
 TEST(HotkeySettings, DefaultsAndIndexing) {
     HotkeySettings s;
-    EXPECT_EQ(formatHotkey(s.convertLanguage), "Ctrl+Alt+L");
+    EXPECT_EQ(formatHotkey(s.convertEnglish), "Ctrl+Alt+E");
+    EXPECT_EQ(formatHotkey(s.convertJapanese), "Ctrl+Alt+J");
     EXPECT_EQ(formatHotkey(s.convertWidth), "Ctrl+Alt+F");
     EXPECT_EQ(formatHotkey(s.clipboardHistory), "Ctrl+Alt+V");
     EXPECT_EQ(formatHotkey(s.snippetPicker), "Ctrl+Alt+S");

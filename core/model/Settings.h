@@ -62,6 +62,41 @@ struct AdvancedSettings {
     friend bool operator==(const AdvancedSettings&, const AdvancedSettings&) = default;
 };
 
+// One row of the user's VI-EN-JA glossary, UTF-8 as it is written to settings.json. Any
+// column except `note` may be empty; a row with fewer than two filled columns has nothing
+// to convert between and is dropped when the index is built.
+struct GlossaryEntry {
+    std::string vi;
+    std::string en;
+    std::string ja;
+    std::string note;
+
+    friend bool operator==(const GlossaryEntry&, const GlossaryEntry&) = default;
+};
+
+// One abbreviation and what it expands to. `body` may contain newlines and the {holes}
+// SnippetTemplate understands.
+struct SnippetEntry {
+    std::string abbr;
+    std::string body;
+    // Expand the moment the ending key is typed, instead of offering it in the popup.
+    // Off unless the user asks for it per snippet: text appearing without being asked for
+    // is the thing people hate most about snippet tools.
+    bool autoExpand = false;
+
+    friend bool operator==(const SnippetEntry&, const SnippetEntry&) = default;
+};
+
+struct SnippetSettings {
+    // name -> value, usable as {name} in any body. Kept sorted by name: unlike the list of
+    // snippets there is no order to preserve here, and sorting keeps settings.json stable
+    // across saves so a diff shows only what actually changed.
+    std::vector<std::pair<std::string, std::string>> variables;
+    std::vector<SnippetEntry> items;
+
+    friend bool operator==(const SnippetSettings&, const SnippetSettings&) = default;
+};
+
 // Remember Vietnamese/English per application: the mode the user last chose while that
 // executable had focus is restored when it regains focus.
 struct LanguageMemory {
@@ -75,7 +110,9 @@ struct LanguageMemory {
 // Everything the user can configure. Serialised to settings.json (schemaVersion guards
 // migrations). Published to the hook thread as an immutable snapshot.
 struct Settings {
-    static constexpr int kSchemaVersion = 1;
+    // 2: the glossary and the snippets moved in here from dictionary.csv and
+    //    snippets.json. A file still saying 1 is one whose rows have not been imported yet.
+    static constexpr int kSchemaVersion = 2;
 
     int schemaVersion = kSchemaVersion;
     bool vietnameseEnabled = true;
@@ -86,6 +123,10 @@ struct Settings {
     AdvancedSettings advanced;
     LanguageMemory languageMemory;
     HotkeySettings hotkeys;
+    // The user's own words. They live here rather than in files of their own so there is
+    // one place to edit, one place to back up, and one file to watch.
+    std::vector<GlossaryEntry> glossary;
+    SnippetSettings snippets;
 
     friend bool operator==(const Settings&, const Settings&) = default;
 };

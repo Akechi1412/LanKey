@@ -12,7 +12,7 @@ Copy-Item $file $backup -Force
 
 CloseAllMsgBoxes
 $s = Settings; if ($s -eq [IntPtr]::Zero) { $s = OpenSettings }
-SelectNav $s 2   # Gợi ý & Tự sửa: idleDelayMs is visible there
+SelectPage $s "Gợi ý & Tự sửa"   # Gợi ý & Tự sửa: idleDelayMs is visible there
 PumpMs 300
 
 function SaveJson($mutate) {

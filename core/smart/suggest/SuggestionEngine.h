@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 
+#include "core/convert/ConversionIndex.h"
 #include "core/interfaces/ISuggestionProvider.h"
 #include "core/model/AtomicSnapshot.h"
 #include "core/model/Lexicon.h"
@@ -36,6 +37,11 @@ public:
     buildSnapshot(const std::vector<model::LexiconEntry>& entries, std::int64_t nowUnixSeconds,
                   const model::SuggestionSettings& settings);
     void publish(std::shared_ptr<const PhraseTrie> trie) { trie_.store(std::move(trie)); }
+    // The user's glossary, rebuilt whenever dictionary.csv changes. Published the same
+    // way as the trie: the hook thread only ever reads a finished object.
+    void publishConversions(std::shared_ptr<const convert::ConversionIndex> index) {
+        conversions_.store(std::move(index));
+    }
     void setSettings(const model::SuggestionSettings& settings) {
         settings_.store(std::make_shared<const model::SuggestionSettings>(settings));
     }
@@ -44,6 +50,7 @@ public:
 
 private:
     model::AtomicSnapshot<PhraseTrie> trie_;
+    model::AtomicSnapshot<convert::ConversionIndex> conversions_;
     model::AtomicSnapshot<model::SuggestionSettings> settings_;
 };
 

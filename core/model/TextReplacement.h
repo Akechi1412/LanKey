@@ -23,6 +23,10 @@ enum class ReplacementReason : std::uint8_t {
 struct TextReplacement {
     int deleteCount = 0;
     std::u32string insert;
+    // After inserting, put the caret this many characters back ({cursor} in a snippet).
+    // No caret API works in every application, so the platform sends that many ArrowLeft
+    // presses - which is why this is a count of characters and not an offset.
+    int caretLeft = 0;
     std::uint64_t expectedGeneration = 0;
     ReplacementReason reason = ReplacementReason::Engine;
 

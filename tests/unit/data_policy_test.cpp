@@ -11,6 +11,8 @@
 #include "core/model/Settings.h"
 #include "core/model/Thresholds.h"
 #include "core/smart/privacy/PrivacyFilter.h"
+#include "core/snippet/SnippetIndex.h"
+#include "core/storage/JsonSettingsStore.h"
 
 #ifndef LANKEY_SOURCE_DIR
 #error "LANKEY_SOURCE_DIR must be defined by CMake"
@@ -28,6 +30,16 @@ std::string policy() {
 
 bool mentions(const std::string& text, const char* fragment) {
     return text.find(fragment) != std::string::npos;
+}
+
+// The one line of the "Dữ liệu nằm ở đâu" table that starts with `file`, so a claim about
+// one file can be checked where it is made instead of anywhere in the document.
+std::string storageRow(const char* file) {
+    const std::string p = policy();
+    const std::size_t at = p.find(std::string("| ") + file);
+    if (at == std::string::npos) return {};
+    const std::size_t end = p.find('\n', at);
+    return p.substr(at, end == std::string::npos ? std::string::npos : end - at);
 }
 
 TEST(DataPolicy, ExistsAndIsVietnamese) {
@@ -57,6 +69,44 @@ TEST(DataPolicy, StorageClaimsMatchTheCode) {
     EXPECT_TRUE(mentions(p, "settings.json"));
     EXPECT_TRUE(mentions(p, "lankey.log"));
     EXPECT_TRUE(mentions(p, "%APPDATA%\\LanKey\\"));
+}
+
+TEST(DataPolicy, TheGlossaryAndSnippetsAreDeclaredWhereTheyActuallyLive) {
+    // They moved out of dictionary.csv / snippets.json and into settings.json, which is
+    // NOT encrypted - unlike the learned lexicon. The document has to say so, because the
+    // user puts their own e-mail addresses and letter templates in there.
+    model::Settings s;
+    s.glossary.push_back({"vi", "en", "", ""});
+    s.snippets.items.push_back({"abbr", "body", false});
+    const std::string written = storage::JsonSettingsStore::serialize(s);
+    ASSERT_TRUE(written.find("glossary") != std::string::npos);
+    ASSERT_TRUE(written.find("snippets") != std::string::npos);
+
+    // Checked against the settings.json ROW of the storage table, not against the document
+    // as a whole: "gõ tắt" appears in several places, so a loose search would keep passing
+    // after somebody deleted the claim that matters.
+    const std::string row = storageRow("`settings.json`");
+    ASSERT_FALSE(row.empty()) << "the storage table no longer has a settings.json row";
+    EXPECT_TRUE(mentions(row, "gõ tắt")) << row;
+    EXPECT_TRUE(mentions(row, "ừ điển riêng")) << row; // "Từ" or "từ"
+    EXPECT_TRUE(mentions(row, "hông mã hoá")) << row;  // "Không" or "không"
+}
+
+TEST(DataPolicy, ClipboardWatchingIsDeclaredAndIsOptIn) {
+    // Watching the clipboard is something the user's own snippets ask for; nothing here
+    // may start doing it quietly.
+    snippet::SnippetIndex plain;
+    ASSERT_TRUE(plain.load(R"({"snippets": [{"abbr": "a", "body": "nothing here"}]})").has_value());
+    EXPECT_FALSE(plain.usesClipboard()) << "nothing asked, so nothing is watched";
+
+    snippet::SnippetIndex pasting;
+    ASSERT_TRUE(
+        pasting.load(R"({"snippets": [{"abbr": "a", "body": "-> {clipboard}"}]})").has_value());
+    EXPECT_TRUE(pasting.usesClipboard());
+
+    const std::string p = policy();
+    EXPECT_TRUE(mentions(p, "{clipboard}")) << "the hole that turns the watching on";
+    EXPECT_TRUE(mentions(p, "ExcludeClipboardContentFromMonitorProcessing"));
 }
 
 TEST(DataPolicy, ExcludedAppsNamedInThePolicyAreInTheDefaults) {

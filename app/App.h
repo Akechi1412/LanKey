@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <memory>
 
+#include "core/convert/ConversionIndex.h"
 #include "core/engine/OpenKeyEngineAdapter.h"
 #include "core/model/Settings.h"
 #include "core/pipeline/HotkeyDetector.h"
@@ -16,6 +17,7 @@
 #include "core/storage/SqliteLexiconStore.h"
 #include "core/util/SystemClock.h"
 
+#include "app/SnippetSource.h"
 #include "platform/win32/CaretResolver.h"
 #include "platform/win32/DpapiProtector.h"
 #include "platform/win32/FileWatcher.h"
@@ -27,6 +29,7 @@
 #include "ui/win32/DataDialog.h"
 #include "ui/win32/LanguageToast.h"
 #include "ui/win32/SettingsWindow.h"
+#include "ui/win32/SnippetPicker.h"
 #include "ui/win32/SuggestionPopup.h"
 #include "ui/win32/TrayIcon.h"
 
@@ -68,7 +71,20 @@ private:
     void showDataDialog();
     void openDataFolder();
     void onHotkey(core::model::HotkeyAction action);
+    void convertSelectionTo(core::model::Language target);
     void openSettingsFile();
+    void openFileInEditor(const std::filesystem::path& file);
+    void applyGlossary();
+    void publishGlossaryToWindow();
+    void applySnippets();
+    void publishSnippetsToWindow();
+    // One-time move of dictionary.csv / snippets.json into settings.json (schemaVersion 1
+    // -> 2), and what a fresh install starts with.
+    void importLegacyFiles();
+    void seedStarterContent();
+    void showSnippetPicker();
+    void insertSnippet(const std::wstring& abbr);
+    void onClipboardChanged();
     void reloadSettingsFile();
     void onSettingsFileChanged(); // the watcher saw a save: apply it if it is not ours
     void showSettings();
@@ -98,6 +114,13 @@ private:
     platform::win32::InputSender sender_;
     platform::win32::SelectionTransformer selection_;
     platform::win32::FileWatcher settingsWatcher_;
+    // The user's snippets. Published to the hook thread, which is the only reader that
+    // matters; this side keeps a pointer for the picker.
+    SnippetSource snippets_;
+    bool clipboardListener_ = false; // registered only while a snippet asks for {clipboard}
+    // The user's own VI-EN-JA glossary. Read on the UI thread, used by the hotkey on the
+    // UI thread; the hook thread never touches it.
+    std::shared_ptr<const core::convert::ConversionIndex> conversions_;
     // What we last wrote to settings.json. A notification whose content matches this is our
     // own save echoing back, not the user editing the file.
     std::string lastSavedSettings_;
@@ -119,6 +142,9 @@ private:
     ui::win32::DataDialog dataDialog_;
     ui::win32::LanguageToast toast_;
     ui::win32::SettingsWindow settingsWindow_;
+    ui::win32::SnippetPicker snippetPicker_;
+    // Chosen in the picker, inserted once the focus is back where it came from.
+    std::wstring pendingSnippet_;
     std::string focusedApp_; // lowercase executable name with focus (UI thread)
     std::atomic<unsigned long long> lexiconEntries_{0}; // from the last dictionary load
     HWND uiWindow_ = nullptr;

@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "core/convert/ConversionIndex.h"
 #include "core/interfaces/ICorrector.h"
 #include "core/model/AtomicSnapshot.h"
 #include "core/model/Correction.h"
@@ -70,6 +71,11 @@ public:
     AutoCorrectEngine();
 
     void publishBase(std::shared_ptr<const BaseIndex> base);
+    // The user's VI-EN-JA glossary. Every term in it is a word they declared exists, so
+    // none of them is ever a typo to repair.
+    void publishConversions(std::shared_ptr<const convert::ConversionIndex> index) {
+        conversions_.store(std::move(index));
+    }
     void publish(std::shared_ptr<const CorrectionSnapshot> snapshot);
     void setSettings(const model::AutoCorrectSettings& settings);
 
@@ -81,6 +87,7 @@ public:
 
 private:
     model::AtomicSnapshot<BaseIndex> base_;
+    model::AtomicSnapshot<convert::ConversionIndex> conversions_;
     model::AtomicSnapshot<CorrectionSnapshot> snapshot_;
     struct EffectiveSettings {
         model::AutoCorrectSettings settings;

@@ -8,6 +8,7 @@ LanKey là bộ gõ tiếng Việt học thói quen gõ của bạn để gợi 
 - **Cụm bạn tự sửa** (ví dụ bạn xoá "sữa lỗi" rồi gõ lại "sửa lỗi"): cặp sai → đúng và mức tin cậy, để LanKey sửa giúp về sau.
 - **Danh sách cấm sửa**: cụm mà bạn đã hoàn tác việc tự sửa hai lần.
 - **Cài đặt** của bạn (kiểu gõ, bật/tắt gợi ý và tự sửa, danh sách ứng dụng loại trừ).
+- **Từ điển riêng và các đoạn gõ tắt bạn tự viết**: đây là chữ của bạn, không phải chữ LanKey học lén — bạn thêm từng dòng một trong cửa sổ Cài đặt. Chúng nằm trong `settings.json` cùng với các cài đặt khác. Xem mục "Dữ liệu nằm ở đâu" bên dưới: tệp này **không mã hoá**, nên đừng để mật khẩu hay bí mật trong đó.
 
 ## LanKey KHÔNG lưu gì
 
@@ -24,7 +25,7 @@ Tất cả trong thư mục `%APPDATA%\LanKey\` trên máy này:
 | Tệp | Nội dung | Bảo vệ |
 |---|---|---|
 | `user_lexicon.enc` | Cụm từ, cụm tự sửa, danh sách cấm sửa | Niêm phong bằng Windows Data Protection (DPAPI) theo tài khoản Windows của bạn. Chỉ tài khoản này trên chính máy này mở được; sao chép sang máy khác hoặc tài khoản khác là vô dụng. Cơ sở dữ liệu chỉ tồn tại dạng đọc được trong bộ nhớ khi LanKey đang chạy. |
-| `settings.json` | Cài đặt | Không mã hoá (không chứa nội dung gõ). |
+| `settings.json` | Cài đặt, **từ điển riêng**, **các đoạn gõ tắt** | Không mã hoá. Không chứa gì LanKey học được từ việc bạn gõ, nhưng chứa nguyên văn những dòng bạn tự nhập — kể cả mẫu thư hay địa chỉ e-mail bạn đặt trong đoạn gõ tắt. Ai đọc được tệp này thì đọc được chúng. |
 | `lankey.log` | Nhật ký kỹ thuật: thời điểm khởi động, số liệu tổng, lỗi | Không bao giờ chứa phím hay chữ bạn gõ. |
 
 Cụm ít dùng tự bị xoá sau 45–180 ngày không dùng; tổng số cụm không vượt quá 100 000.
@@ -42,6 +43,19 @@ clipboard của bạn ngay sau đó** và đánh dấu nội dung tạm bằng c
 lại. Văn bản đó chỉ nằm trong bộ nhớ trong khoảnh khắc biến đổi, không được lưu xuống đĩa và không
 đi vào từ điển học. Nếu không có gì được bôi đen, LanKey không chạm vào clipboard. Một hạn chế:
 clipboard đang chứa ảnh hoặc tệp (không phải văn bản) không khôi phục lại được.
+
+## Clipboard khi đoạn gõ tắt dùng `{clipboard}`
+
+Đoạn gõ tắt có thể chèn nội dung clipboard vào chỗ `{clipboard}`. Để làm được điều đó mà không bắt
+một phím gõ phải chờ, LanKey giữ **một bản sao văn bản clipboard trong bộ nhớ**, cập nhật mỗi khi
+clipboard đổi. Ba giới hạn, và đây là toàn bộ:
+
+- **Chỉ theo dõi khi bạn yêu cầu.** Nếu không đoạn gõ tắt nào chứa `{clipboard}`, LanKey không đăng
+  ký theo dõi clipboard và không giữ gì cả. Bỏ `{clipboard}` khỏi đoạn cuối cùng dùng nó thì việc
+  theo dõi dừng lại và bản sao đang giữ bị xoá ngay.
+- **Bỏ qua nội dung được đánh dấu bí mật.** Trình quản lý mật khẩu đánh dấu mục của chúng bằng cờ
+  `ExcludeClipboardContentFromMonitorProcessing`; LanKey thấy cờ đó thì không giữ bản sao.
+- **Chỉ trong bộ nhớ.** Không ghi xuống đĩa, không vào từ điển học, mất khi thoát LanKey.
 
 ## Xoá dữ liệu
 

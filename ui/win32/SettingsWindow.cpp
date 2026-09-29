@@ -43,6 +43,11 @@ constexpr int kButtonHeight = 30;
 constexpr int kStatsRowHeight = 50;
 // Dictionary columns at 96 dpi; the first is stretched to fill (fitDictionaryColumns).
 constexpr int kDictColumnWidths[] = {260, 70, 110, 90};
+// The glossary: four columns of text, the first one stretched to fill.
+constexpr int kGlossaryColumnWidths[] = {150, 110, 110, 90};
+// Gõ tắt: the abbreviation and the flag keep their width; the body takes what is left,
+// because the body is the part the user is scanning for.
+constexpr int kSnippetColumnWidths[] = {130, 300, 90};
 constexpr int kStatsCardHeight = 18 + kStatsRowHeight * 2 + 26 + 18;
 
 // The light face of the brand palette: the popup and toast are dark cards over other
@@ -98,6 +103,21 @@ enum Id : int {
     kEraseAll,
     kDictStatus,
     kReloadDict,
+    // Glossary (the user's own VI-EN-JA terms)
+    kGlossarySearch = 350,
+    kGlossaryList = 351,
+    kGlossaryStatus = 352,
+    kGlossaryAdd = 353,
+    kGlossaryEdit = 354,
+    kGlossaryDelete = 355,
+    // Gõ tắt (snippets.json)
+    kSnippetSearch = 360,
+    kSnippetList = 361,
+    kSnippetStatus = 362,
+    kSnippetAdd = 363,
+    kSnippetEdit = 364,
+    kSnippetDelete = 365,
+    kSnippetVariables = 366,
     // Privacy
     kExcludedApps = 400,
     kSuggestionsOffApps,
@@ -117,7 +137,8 @@ enum Id : int {
     kResetDefaults = 508,
     // Shortcuts (one field per HotkeyAction, in kAllHotkeyActions order)
     kHotkeyFirst = 600,
-    kHotkeyConvertLanguage = kHotkeyFirst,
+    kHotkeyConvertEnglish = kHotkeyFirst,
+    kHotkeyConvertJapanese,
     kHotkeyConvertWidth,
     kHotkeyClipboard,
     kHotkeySnippet,
@@ -131,8 +152,10 @@ int hotkeyFieldId(core::model::HotkeyAction a) {
 const wchar_t* hotkeyActionLabel(core::model::HotkeyAction a) {
     using core::model::HotkeyAction;
     switch (a) {
-    case HotkeyAction::ConvertLanguage:
-        return L"Chuyển đổi ngôn ngữ vùng bôi đen (VI → EN → JA)";
+    case HotkeyAction::ConvertEnglish:
+        return L"Chuyển vùng bôi đen sang English (theo từ điển riêng)";
+    case HotkeyAction::ConvertJapanese:
+        return L"Chuyển vùng bôi đen sang 日本語 (theo từ điển riêng)";
     case HotkeyAction::ConvertWidth:
         return L"Half-width ↔ full-width vùng bôi đen";
     case HotkeyAction::ClipboardHistory:
@@ -143,9 +166,12 @@ const wchar_t* hotkeyActionLabel(core::model::HotkeyAction a) {
     return L"";
 }
 
-const wchar_t* kPageTitles[] = {L"Kiểu gõ",         L"Tuỳ chọn gõ",    L"Gợi ý & Tự sửa",
-                                L"Từ điển cá nhân", L"Quyền riêng tư", L"Phím tắt",
-                                L"Nâng cao",        L"Giới thiệu"};
+// "Cụm từ đã học" is what LanKey picked up from the user's typing; "Từ điển cá nhân"
+// is the glossary they wrote themselves. Two different things that were briefly going to
+// share a name.
+const wchar_t* kPageTitles[] = {
+    L"Kiểu gõ", L"Tuỳ chọn gõ",    L"Gợi ý & Tự sửa", L"Cụm từ đã học", L"Từ điển cá nhân",
+    L"Gõ tắt",  L"Quyền riêng tư", L"Phím tắt",       L"Nâng cao",      L"Giới thiệu"};
 
 std::wstring lines(const std::vector<std::string>& apps) {
     std::wstring out;
@@ -649,7 +675,9 @@ void SettingsWindow::build(HINSTANCE instance) {
     buildTyping();
     buildOptions();
     buildSmart();
-    buildDictionary();
+    buildLearned();
+    buildGlossary();
+    buildSnippets();
     buildPrivacy();
     buildShortcuts();
     buildAdvanced();
@@ -727,8 +755,8 @@ void SettingsWindow::buildSmart() {
     button(p, L"Làm mới", kRefreshRecent, 110, false);
 }
 
-void SettingsWindow::buildDictionary() {
-    const Page p = Page::Dictionary;
+void SettingsWindow::buildLearned() {
+    const Page p = Page::Learned;
     auto& page = pages_[static_cast<int>(p)];
     auto& y = y_[static_cast<int>(p)];
     // SS_CENTERIMAGE puts the single line of text on the box's own centre line instead of
@@ -786,6 +814,121 @@ void SettingsWindow::buildDictionary() {
     add(p, L"BUTTON", L"Xoá toàn bộ", BS_PUSHBUTTON | WS_TABSTOP, kEraseAll, 112, 112,
         kButtonHeight);
     page.back().rightAligned = true;
+}
+
+void SettingsWindow::buildGlossary() {
+    const Page p = Page::Glossary;
+    auto& y = y_[static_cast<int>(p)];
+    auto& page = pages_[static_cast<int>(p)];
+
+    note(p,
+         L"Nh\u1eefng t\u1eeb b\u1ea1n t\u1ef1 \u0111\u1ecbnh ngh\u0129a: t\u00ean s\u1ea3n "
+         L"ph\u1ea9m, thu\u1eadt ng\u1eef d\u1ef1 \u00e1n, ti\u1ebfng Nh\u1eadt hay "
+         L"d\u00f9ng. LanKey g\u1ee3i \u00fd ch\u00fang khi b\u1ea1n g\u00f5, \u0111\u1ed5i "
+         L"b\u1eb1ng ph\u00edm t\u1eaft khi b\u00f4i \u0111en, v\u00e0 kh\u00f4ng bao gi\u1edd "
+         L"t\u1ef1 s\u1eeda ch\u00fang.",
+         2);
+    add(p, L"STATIC", L"T\u00ecm ki\u1ebfm", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE, 0, 0, 72,
+        kRowHeight);
+    add(p, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, kGlossarySearch, 78, 300, kRowHeight,
+        WS_EX_CLIENTEDGE);
+    {
+        const HWND status =
+            add(p, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE | SS_ENDELLIPSIS,
+                kGlossaryStatus, 390, 0, kRowHeight);
+        dimStatics_.push_back(status);
+    }
+    y += kRowHeight + 6;
+    rowX_ = 0;
+    const int listTop = y;
+    {
+        const HWND list =
+            add(p, WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | WS_TABSTOP,
+                kGlossaryList, 0, -122, 100, WS_EX_CLIENTEDGE);
+        page.back().stretch = true;
+        ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        const wchar_t* headers[] = {L"Ti\u1ebfng Vi\u1ec7t", L"English", L"\u65e5\u672c\u8a9e",
+                                    L"Ghi ch\u00fa"};
+        for (int c = 0; c < 4; ++c) {
+            LVCOLUMNW col{};
+            col.mask = LVCF_TEXT | LVCF_WIDTH;
+            col.pszText = const_cast<wchar_t*>(headers[c]);
+            col.cx = px(kGlossaryColumnWidths[c]);
+            ListView_InsertColumn(list, c, &col);
+        }
+    }
+    // Button column beside the list. `x` is the distance from the RIGHT edge once
+    // rightAligned is set, so it is positive - the same shape the learned page uses.
+    int by = listTop;
+    for (const auto& button : {std::pair<const wchar_t*, int>{L"Th\u00eam", kGlossaryAdd},
+                               {L"S\u1eeda", kGlossaryEdit},
+                               {L"Xo\u00e1", kGlossaryDelete}}) {
+        y = by;
+        add(p, L"BUTTON", button.first, BS_PUSHBUTTON | WS_TABSTOP, button.second, 112, 112,
+            kButtonHeight);
+        page.back().rightAligned = true;
+        by += kButtonHeight + 8;
+    }
+    y = listTop;
+}
+
+void SettingsWindow::buildSnippets() {
+    const Page p = Page::Snippets;
+    auto& y = y_[static_cast<int>(p)];
+    auto& page = pages_[static_cast<int>(p)];
+
+    // One wrapped paragraph, like every other page. An earlier version laid the holes out
+    // in columns with separators; at this width it wrapped into a ragged mess. What each
+    // hole does belongs in the editor, which is where you are when you need it.
+    note(p,
+         L"Gõ chữ viết tắt rồi bấm Tab để bung cả đoạn. Viết tắt phân biệt hoa thường: ky "
+         L"khác Ky. Trong nội dung có thể đặt {date}, {time}, {clipboard}, {cursor}, "
+         L"{param:Tên} và các biến bạn khai báo; bấm Sửa để xem cách viết từng loại.",
+         3);
+    add(p, L"STATIC", L"Tìm kiếm", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE, 0, 0, 72, kRowHeight);
+    add(p, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, kSnippetSearch, 78, 300, kRowHeight,
+        WS_EX_CLIENTEDGE);
+    {
+        const HWND status =
+            add(p, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE | SS_ENDELLIPSIS,
+                kSnippetStatus, 390, 0, kRowHeight);
+        dimStatics_.push_back(status);
+    }
+    y += kRowHeight + 6;
+    rowX_ = 0;
+    const int listTop = y;
+    {
+        const HWND list =
+            add(p, WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | WS_TABSTOP,
+                kSnippetList, 0, -122, 100, WS_EX_CLIENTEDGE);
+        page.back().stretch = true;
+        ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        const wchar_t* headers[] = {L"Viết tắt", L"Nội dung", L"Tự bung"};
+        for (int c = 0; c < 3; ++c) {
+            LVCOLUMNW col{};
+            col.mask = LVCF_TEXT | LVCF_WIDTH;
+            col.pszText = const_cast<wchar_t*>(headers[c]);
+            col.cx = px(kSnippetColumnWidths[c]);
+            ListView_InsertColumn(list, c, &col);
+        }
+    }
+    int by = listTop;
+    for (const auto& button : {std::pair<const wchar_t*, int>{L"Thêm", kSnippetAdd},
+                               {L"Sửa", kSnippetEdit},
+                               {L"Xoá", kSnippetDelete}}) {
+        y = by;
+        add(p, L"BUTTON", button.first, BS_PUSHBUTTON | WS_TABSTOP, button.second, 112, 112,
+            kButtonHeight);
+        page.back().rightAligned = true;
+        by += kButtonHeight + 8;
+    }
+    // Set apart from the three above: those act on the selected row, this one edits the
+    // values shared by every snippet.
+    y = by + 12;
+    add(p, L"BUTTON", L"Biến…", BS_PUSHBUTTON | WS_TABSTOP, kSnippetVariables, 112, 112,
+        kButtonHeight);
+    page.back().rightAligned = true;
+    y = listTop;
 }
 
 void SettingsWindow::buildPrivacy() {
@@ -1028,9 +1171,11 @@ void SettingsWindow::fitDictionaryColumns() {
         ListView_SetColumnWidth(list, c, px(kDictColumnWidths[c]));
         fixed += px(kDictColumnWidths[c]);
     }
-    const int scrollbar = static_cast<int>(GetSystemMetricsForDpi(SM_CXVSCROLL, dpi_));
-    const int available = static_cast<int>(r.right - r.left) - fixed - scrollbar;
-    ListView_SetColumnWidth(list, 0, (std::max)(px(120), available));
+    // No scrollbar allowance: GetClientRect already excludes one when it is showing, so
+    // subtracting it again left a strip of bare background past the last column - which
+    // the tinted selection made obvious.
+    ListView_SetColumnWidth(list, 0,
+                            (std::max)(px(120), static_cast<int>(r.right - r.left) - fixed));
 }
 
 void SettingsWindow::layout() {
@@ -1074,6 +1219,8 @@ void SettingsWindow::layout() {
     }
     if (dwp != nullptr) EndDeferWindowPos(dwp);
     fitDictionaryColumns();
+    fitGlossaryColumns();
+    fitSnippetColumns();
 }
 
 void SettingsWindow::paintChrome(HDC dc, const RECT& client) {
@@ -1192,6 +1339,10 @@ void SettingsWindow::loadControls() {
     for (const auto action : core::model::kAllHotkeyActions) {
         hotkeyField::set(GetDlgItem(hwnd_, hotkeyFieldId(action)), s.hotkeys[action]);
     }
+    // The glossary is read at startup, before this window exists, so its rows are sitting
+    // in glossary_ rather than in the list view. Put them there now.
+    fillGlossaryList();
+    fillSnippetList();
     loading_ = false;
 }
 
@@ -1379,6 +1530,385 @@ void SettingsWindow::dictionaryDispInfo(tagLVDISPINFOW& info) {
               _TRUNCATE);
 }
 
+void SettingsWindow::setGlossary(std::vector<GlossaryRow> rows) {
+    glossary_ = std::move(rows);
+    glossaryFolded_.clear();
+    glossaryFolded_.reserve(glossary_.size());
+    for (const auto& r : glossary_) {
+        // One folded haystack per row: searching "login" should find the row whether the
+        // user thinks of it in Vietnamese, English, Japanese or by its note.
+        std::wstring all = r.vi + L' ' + r.en + L' ' + r.ja + L' ' + r.note;
+        for (auto& c : all)
+            c = static_cast<wchar_t>(towlower(c));
+        glossaryFolded_.push_back(std::move(all));
+    }
+    if (hwnd_ != nullptr) fillGlossaryList();
+}
+
+void SettingsWindow::fillGlossaryList() {
+    const HWND list = GetDlgItem(hwnd_, kGlossaryList);
+    if (list == nullptr) return;
+    wchar_t filterBuf[128] = {};
+    GetDlgItemTextW(hwnd_, kGlossarySearch, filterBuf, 127);
+    std::wstring filter(filterBuf);
+    for (auto& c : filter)
+        c = static_cast<wchar_t>(towlower(c));
+
+    glossaryIndex_.clear();
+    glossaryIndex_.reserve(glossary_.size());
+    for (std::size_t i = 0; i < glossary_.size(); ++i) {
+        if (!filter.empty() && glossaryFolded_[i].find(filter) == std::wstring::npos) continue;
+        glossaryIndex_.push_back(static_cast<int>(i));
+    }
+    ListView_SetItemState(list, -1, 0, LVIS_SELECTED);
+    SendMessageW(list, LVM_SETITEMCOUNT, static_cast<WPARAM>(glossaryIndex_.size()),
+                 LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL);
+    InvalidateRect(list, nullptr, TRUE);
+    // Re-fitted here, not only on layout: adding rows can bring a scrollbar in (or take it
+    // away), and the stretched column has to follow the width that leaves.
+    fitGlossaryColumns();
+    updateGlossaryStatus();
+    updateGlossaryButtons();
+}
+
+void SettingsWindow::updateGlossaryStatus() {
+    if (hwnd_ == nullptr) return;
+    const bool filtered = glossaryIndex_.size() != glossary_.size();
+    std::wstring status = std::to_wstring(glossaryIndex_.size());
+    if (filtered) status += L" / " + std::to_wstring(glossary_.size());
+    status += L" t\u1eeb";
+    SetDlgItemTextW(hwnd_, kGlossaryStatus, status.c_str());
+}
+
+void SettingsWindow::glossaryDispInfo(tagLVDISPINFOW& info) {
+    if ((info.item.mask & LVIF_TEXT) == 0 || info.item.pszText == nullptr) return;
+    info.item.pszText[0] = 0;
+    const auto row = static_cast<std::size_t>(info.item.iItem);
+    if (info.item.iItem < 0 || row >= glossaryIndex_.size()) return;
+    const auto& e = glossary_[static_cast<std::size_t>(glossaryIndex_[row])];
+    const std::wstring* cell = info.item.iSubItem == 0   ? &e.vi
+                               : info.item.iSubItem == 1 ? &e.en
+                               : info.item.iSubItem == 2 ? &e.ja
+                               : info.item.iSubItem == 3 ? &e.note
+                                                         : nullptr;
+    if (cell == nullptr) return;
+    wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax), cell->c_str(),
+              _TRUNCATE);
+}
+
+int SettingsWindow::selectedGlossaryRow() const {
+    const int line = ListView_GetNextItem(GetDlgItem(hwnd_, kGlossaryList), -1, LVNI_SELECTED);
+    if (line < 0 || static_cast<std::size_t>(line) >= glossaryIndex_.size()) return -1;
+    return glossaryIndex_[static_cast<std::size_t>(line)];
+}
+
+int SettingsWindow::selectedSnippetRow() const {
+    const int line = ListView_GetNextItem(GetDlgItem(hwnd_, kSnippetList), -1, LVNI_SELECTED);
+    if (line < 0 || static_cast<std::size_t>(line) >= snippetIndex_.size()) return -1;
+    return snippetIndex_[static_cast<std::size_t>(line)];
+}
+
+void SettingsWindow::updateGlossaryButtons() {
+    const bool one = selectedGlossaryRow() >= 0;
+    for (const int id : {kGlossaryEdit, kGlossaryDelete}) {
+        if (const HWND b = GetDlgItem(hwnd_, id); b != nullptr) EnableWindow(b, one);
+    }
+}
+
+void SettingsWindow::updateSnippetButtons() {
+    const bool one = selectedSnippetRow() >= 0;
+    for (const int id : {kSnippetEdit, kSnippetDelete}) {
+        if (const HWND b = GetDlgItem(hwnd_, id); b != nullptr) EnableWindow(b, one);
+    }
+}
+
+void SettingsWindow::editGlossaryRow(int row) {
+    const bool adding = row < 0;
+    if (!adding && static_cast<std::size_t>(row) >= glossary_.size()) return;
+    const GlossaryRow current = adding ? GlossaryRow{} : glossary_[static_cast<std::size_t>(row)];
+    using Field = RowEditor::Field;
+    std::vector<Field> fields{
+        {L"Tiếng Việt", current.vi, Field::Kind::Line, {}},
+        {L"English", current.en, Field::Kind::Line, {}},
+        {L"日本語", current.ja, Field::Kind::Line, {}},
+        {L"Ghi chú", current.note, Field::Kind::Line, L"Không bắt buộc. Chỉ để bạn nhớ."},
+    };
+    rowEditor_.show(instance_, hwnd_, adding ? L"Thêm từ" : L"Sửa từ", std::move(fields),
+                    [this, row](const std::vector<std::wstring>& v) {
+                        GlossaryRow next{v[0], v[1], v[2], v[3]};
+                        // Every column blank is how the user says "never mind" after
+                        // opening the editor; adding an empty row would be a surprise.
+                        if (next.vi.empty() && next.en.empty() && next.ja.empty()) return;
+                        if (row < 0) {
+                            glossary_.push_back(std::move(next));
+                        } else {
+                            glossary_[static_cast<std::size_t>(row)] = std::move(next);
+                        }
+                        if (callbacks_.onGlossaryEdited) callbacks_.onGlossaryEdited(glossary_);
+                        setGlossary(glossary_); // refold for search, then redraw
+                    });
+}
+
+void SettingsWindow::editSnippetRow(int row) {
+    const bool adding = row < 0;
+    if (!adding && static_cast<std::size_t>(row) >= snippets_.size()) return;
+    const SnippetRow current = adding ? SnippetRow{} : snippets_[static_cast<std::size_t>(row)];
+    using Field = RowEditor::Field;
+    std::vector<Field> fields{
+        {L"Viết tắt", current.abbr, Field::Kind::Line, L"Phân biệt hoa thường."},
+        {L"Nội dung", current.body, Field::Kind::Multiline,
+         L"Đổi định dạng ngày giờ: {date:yyyy-MM-dd}, {time:HH:mm:ss}. Nhận yyyy MM dd HH "
+         L"mm ss; chữ khác giữ nguyên, nên {date:dd/MM/yyyy} hay {date:yyyy年MM月dd日} đều "
+         L"được. Không ghi định dạng thì mặc định là dd/MM/yyyy và HH:mm."},
+        {L"Tự bung khi gõ dấu cách", current.autoExpand ? L"1" : L"", Field::Kind::Check, {}},
+    };
+    rowEditor_.show(instance_, hwnd_, adding ? L"Thêm đoạn gõ tắt" : L"Sửa đoạn gõ tắt",
+                    std::move(fields), [this, row](const std::vector<std::wstring>& v) {
+                        SnippetRow next{v[0], v[1], !v[2].empty()};
+                        if (next.abbr.empty() && next.body.empty()) return;
+                        if (row < 0) {
+                            snippets_.push_back(std::move(next));
+                        } else {
+                            snippets_[static_cast<std::size_t>(row)] = std::move(next);
+                        }
+                        if (callbacks_.onSnippetsEdited) callbacks_.onSnippetsEdited(snippets_);
+                        setSnippets(snippets_);
+                    });
+}
+
+void SettingsWindow::setSnippetVariables(std::vector<std::pair<std::wstring, std::wstring>> v) {
+    variables_ = std::move(v);
+}
+
+// Variables are a handful of name/value pairs shared by every snippet, so they get one
+// text box - "tên = giá trị", a line each - instead of a list with its own three buttons.
+// It is also how the user would write them in the file.
+void SettingsWindow::editSnippetVariables() {
+    std::wstring text;
+    for (const auto& [name, value] : variables_) {
+        text += name;
+        text += L" = ";
+        text += value;
+        text += L'\n';
+    }
+    using Field = RowEditor::Field;
+    std::vector<Field> fields{
+        {L"Mỗi dòng một biến, dạng  tên = giá trị", text, Field::Kind::Multiline,
+         L"Gọi trong nội dung đoạn gõ tắt bằng {tên}. Dòng trống hoặc thiếu dấu = bị bỏ qua. "
+         L"Không đặt tên date, time, clipboard, cursor, param — LanKey đã dùng sẵn."},
+    };
+    rowEditor_.show(instance_, hwnd_, L"Biến dùng chung", std::move(fields),
+                    [this](const std::vector<std::wstring>& v) {
+                        std::vector<std::pair<std::wstring, std::wstring>> next;
+                        std::vector<std::wstring> taken; // names the template already owns
+                        std::size_t start = 0;
+                        const std::wstring& all = v[0];
+                        while (start <= all.size()) {
+                            std::size_t end = all.find(L'\n', start);
+                            if (end == std::wstring::npos) end = all.size();
+                            const std::wstring line = all.substr(start, end - start);
+                            start = end + 1;
+                            const std::size_t eq = line.find(L'=');
+                            if (eq == std::wstring::npos) continue; // not a definition yet
+                            const auto trim = [](std::wstring s) {
+                                while (!s.empty() && (s.front() == L' ' || s.front() == L'\t'))
+                                    s.erase(s.begin());
+                                while (!s.empty() &&
+                                       (s.back() == L' ' || s.back() == L'\t' || s.back() == L'\r'))
+                                    s.pop_back();
+                                return s;
+                            };
+                            std::wstring name = trim(line.substr(0, eq));
+                            if (name.empty()) continue;
+                            if (core::snippet::SnippetTemplate::isReservedName(
+                                    platform::win32::fromUtf16(name))) {
+                                // {date} is the date whatever this says, so the variable
+                                // would never fire. Say so rather than save something dead.
+                                taken.push_back(name);
+                                continue;
+                            }
+                            next.emplace_back(std::move(name), trim(line.substr(eq + 1)));
+                        }
+                        if (!taken.empty()) {
+                            std::wstring names;
+                            for (const auto& t : taken) {
+                                if (!names.empty()) names += L", ";
+                                names += L'{' + t + L'}';
+                            }
+                            MessageBoxW(hwnd_,
+                                        (L"LanKey đã dùng sẵn " + names +
+                                         L" nên biến cùng tên sẽ không bao giờ chạy.\n\n"
+                                         L"Những dòng đó bị bỏ qua; hãy đặt tên khác.")
+                                            .c_str(),
+                                        L"LanKey", MB_ICONWARNING | MB_OK);
+                        }
+                        variables_ = next;
+                        if (callbacks_.onVariablesEdited) callbacks_.onVariablesEdited(next);
+                    });
+}
+
+void SettingsWindow::deleteGlossaryRow() {
+    const int row = selectedGlossaryRow();
+    if (row < 0 || static_cast<std::size_t>(row) >= glossary_.size()) return;
+    const GlossaryRow& e = glossary_[static_cast<std::size_t>(row)];
+    // Asked because it cannot be undone from here: the row is gone from settings.json as
+    // soon as this returns.
+    const std::wstring what = e.vi.empty() ? e.en : e.vi;
+    if (MessageBoxW(hwnd_, (L"Xoá \"" + what + L"\" khỏi từ điển?").c_str(), L"LanKey",
+                    MB_ICONQUESTION | MB_OKCANCEL) != IDOK) {
+        return;
+    }
+    glossary_.erase(glossary_.begin() + row);
+    if (callbacks_.onGlossaryEdited) callbacks_.onGlossaryEdited(glossary_);
+    setGlossary(glossary_);
+}
+
+void SettingsWindow::deleteSnippetRow() {
+    const int row = selectedSnippetRow();
+    if (row < 0 || static_cast<std::size_t>(row) >= snippets_.size()) return;
+    const std::wstring what = snippets_[static_cast<std::size_t>(row)].abbr;
+    if (MessageBoxW(hwnd_, (L"Xoá đoạn gõ tắt \"" + what + L"\"?").c_str(), L"LanKey",
+                    MB_ICONQUESTION | MB_OKCANCEL) != IDOK) {
+        return;
+    }
+    snippets_.erase(snippets_.begin() + row);
+    if (callbacks_.onSnippetsEdited) callbacks_.onSnippetsEdited(snippets_);
+    setSnippets(snippets_);
+}
+
+void SettingsWindow::setSnippets(std::vector<SnippetRow> rows) {
+    snippets_ = std::move(rows);
+    snippetFolded_.clear();
+    snippetFolded_.reserve(snippets_.size());
+    for (const auto& r : snippets_) {
+        // Searching finds a snippet by what it says as well as by what it is called: the
+        // user remembers the sentence more often than the abbreviation they invented. The
+        // whole body, not the previewed line - the words they remember may be further down.
+        std::wstring all = r.abbr + L' ' + r.body;
+        for (auto& c : all)
+            c = static_cast<wchar_t>(towlower(c));
+        snippetFolded_.push_back(std::move(all));
+    }
+    if (hwnd_ != nullptr) fillSnippetList();
+}
+
+void SettingsWindow::fillSnippetList() {
+    const HWND list = GetDlgItem(hwnd_, kSnippetList);
+    if (list == nullptr) return;
+    wchar_t filterBuf[128] = {};
+    GetDlgItemTextW(hwnd_, kSnippetSearch, filterBuf, 127);
+    std::wstring filter(filterBuf);
+    for (auto& c : filter)
+        c = static_cast<wchar_t>(towlower(c));
+
+    snippetIndex_.clear();
+    snippetIndex_.reserve(snippets_.size());
+    for (std::size_t i = 0; i < snippets_.size(); ++i) {
+        if (!filter.empty() && snippetFolded_[i].find(filter) == std::wstring::npos) continue;
+        snippetIndex_.push_back(static_cast<int>(i));
+    }
+    ListView_SetItemState(list, -1, 0, LVIS_SELECTED);
+    SendMessageW(list, LVM_SETITEMCOUNT, static_cast<WPARAM>(snippetIndex_.size()),
+                 LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL);
+    InvalidateRect(list, nullptr, TRUE);
+    fitSnippetColumns();
+    updateSnippetStatus();
+    updateSnippetButtons();
+}
+
+void SettingsWindow::updateSnippetStatus() {
+    if (hwnd_ == nullptr) return;
+    const bool filtered = snippetIndex_.size() != snippets_.size();
+    std::wstring status = std::to_wstring(snippetIndex_.size());
+    if (filtered) status += L" / " + std::to_wstring(snippets_.size());
+    status += L" đoạn";
+    SetDlgItemTextW(hwnd_, kSnippetStatus, status.c_str());
+}
+
+void SettingsWindow::snippetDispInfo(tagLVDISPINFOW& info) {
+    if ((info.item.mask & LVIF_TEXT) == 0 || info.item.pszText == nullptr) return;
+    info.item.pszText[0] = 0;
+    const auto row = static_cast<std::size_t>(info.item.iItem);
+    if (info.item.iItem < 0 || row >= snippetIndex_.size()) return;
+    const auto& e = snippets_[static_cast<std::size_t>(snippetIndex_[row])];
+    if (info.item.iSubItem == 1) {
+        // One line in a one-line cell. A body can be several lines; the rest is in the
+        // editor, and a cell full of line-break boxes would say less than the first line.
+        const auto end = e.body.find(L'\n');
+        dispBuf_ = end == std::wstring::npos ? e.body : e.body.substr(0, end);
+        wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax),
+                  dispBuf_.c_str(), _TRUNCATE);
+        return;
+    }
+    const wchar_t* cell = info.item.iSubItem == 0   ? e.abbr.c_str()
+                          : info.item.iSubItem == 2 ? (e.autoExpand ? L"✓" : L"")
+                                                    : nullptr;
+    if (cell == nullptr) return;
+    wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax), cell, _TRUNCATE);
+}
+
+// A selected row in the window's own colours: the same tinted fill and accent bar the
+// navigation rail uses for the page you are on, so "this is the one" looks the same
+// everywhere. Without this the control paints the system highlight - a different blue
+// from the brand one - and a dotted focus rectangle over it.
+LRESULT SettingsWindow::listCustomDraw(tagNMLVCUSTOMDRAW& draw) {
+    switch (draw.nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        return CDRF_NOTIFYITEMDRAW;
+    case CDDS_ITEMPREPAINT: {
+        const HWND list = draw.nmcd.hdr.hwndFrom;
+        const auto item = static_cast<int>(draw.nmcd.dwItemSpec);
+        const bool selected = ListView_GetItemState(list, item, LVIS_SELECTED) != 0;
+        draw.clrText = kText;
+        draw.clrTextBk = selected ? kTint : kContentBg;
+        // Telling the control the row is neither selected nor focused is what stops it
+        // painting the system highlight and the focus rectangle on top of our colours.
+        draw.nmcd.uItemState &= ~static_cast<UINT>(CDIS_SELECTED | CDIS_FOCUS);
+        return selected ? CDRF_NOTIFYPOSTPAINT : CDRF_DODEFAULT;
+    }
+    case CDDS_ITEMPOSTPAINT: {
+        const HWND list = draw.nmcd.hdr.hwndFrom;
+        RECT row{};
+        if (ListView_GetItemRect(list, static_cast<int>(draw.nmcd.dwItemSpec), &row, LVIR_BOUNDS)) {
+            const RECT bar{row.left, row.top, row.left + px(3), row.bottom};
+            fillRect(draw.nmcd.hdc, bar, kAccent);
+        }
+        return CDRF_DODEFAULT;
+    }
+    default:
+        break;
+    }
+    return CDRF_DODEFAULT;
+}
+
+// The abbreviation and the flag keep their width; the body takes the rest.
+void SettingsWindow::fitSnippetColumns() {
+    const HWND list = GetDlgItem(hwnd_, kSnippetList);
+    if (list == nullptr) return;
+    RECT r{};
+    GetClientRect(list, &r);
+    ListView_SetColumnWidth(list, 0, px(kSnippetColumnWidths[0]));
+    ListView_SetColumnWidth(list, 2, px(kSnippetColumnWidths[2]));
+    const int fixed = px(kSnippetColumnWidths[0]) + px(kSnippetColumnWidths[2]);
+    ListView_SetColumnWidth(list, 1,
+                            (std::max)(px(120), static_cast<int>(r.right - r.left) - fixed));
+}
+
+// The three right-hand columns keep their width; the Vietnamese one takes what is left.
+void SettingsWindow::fitGlossaryColumns() {
+    const HWND list = GetDlgItem(hwnd_, kGlossaryList);
+    if (list == nullptr) return;
+    RECT r{};
+    GetClientRect(list, &r);
+    int fixed = 0;
+    for (int c = 1; c < 4; ++c) {
+        ListView_SetColumnWidth(list, c, px(kGlossaryColumnWidths[c]));
+        fixed += px(kGlossaryColumnWidths[c]);
+    }
+    ListView_SetColumnWidth(list, 0,
+                            (std::max)(px(100), static_cast<int>(r.right - r.left) - fixed));
+}
+
 std::vector<std::wstring> SettingsWindow::selectedPhrases() const {
     std::vector<std::wstring> out;
     const HWND list = GetDlgItem(hwnd_, kDictList);
@@ -1477,9 +2007,40 @@ LRESULT SettingsWindow::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
     }
     case WM_NOTIFY: {
         const auto* header = reinterpret_cast<const NMHDR*>(lParam);
-        if (header != nullptr && header->idFrom == kDictList && header->code == LVN_GETDISPINFOW) {
-            dictionaryDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
-            return 0;
+        if (header != nullptr && header->code == LVN_GETDISPINFOW) {
+            if (header->idFrom == kDictList) {
+                dictionaryDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
+                return 0;
+            }
+            if (header->idFrom == kGlossaryList) {
+                glossaryDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
+                return 0;
+            }
+            if (header->idFrom == kSnippetList) {
+                snippetDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
+                return 0;
+            }
+        }
+        if (header != nullptr && header->code == NM_CUSTOMDRAW &&
+            (header->idFrom == kDictList || header->idFrom == kGlossaryList ||
+             header->idFrom == kSnippetList)) {
+            return listCustomDraw(*reinterpret_cast<NMLVCUSTOMDRAW*>(lParam));
+        }
+        if (header != nullptr && header->code == LVN_ITEMCHANGED) {
+            // Sửa and Xoá only mean something with a row selected.
+            if (header->idFrom == kGlossaryList) updateGlossaryButtons();
+            if (header->idFrom == kSnippetList) updateSnippetButtons();
+        }
+        if (header != nullptr && header->code == NM_DBLCLK) {
+            // Double click is how a list of rows is edited everywhere else.
+            if (header->idFrom == kGlossaryList) {
+                editGlossaryRow(selectedGlossaryRow());
+                return 0;
+            }
+            if (header->idFrom == kSnippetList) {
+                editSnippetRow(selectedSnippetRow());
+                return 0;
+            }
         }
         break;
     }
@@ -1608,7 +2169,8 @@ void SettingsWindow::onCommand(int id, int code, HWND from) {
     case kDefineKeys:
         defineCustomKeys();
         return;
-    case kHotkeyConvertLanguage:
+    case kHotkeyConvertEnglish:
+    case kHotkeyConvertJapanese:
     case kHotkeyConvertWidth:
     case kHotkeyClipboard:
     case kHotkeySnippet:
@@ -1633,6 +2195,33 @@ void SettingsWindow::onCommand(int id, int code, HWND from) {
             const auto sel = static_cast<int>(SendMessageW(nav_, LB_GETCURSEL, 0, 0));
             if (sel >= 0 && sel < kPageCount) selectPage(static_cast<Page>(sel));
         }
+        return;
+    case kGlossarySearch:
+        if (code == EN_CHANGE) fillGlossaryList();
+        return;
+    case kGlossaryAdd:
+        editGlossaryRow(-1);
+        return;
+    case kGlossaryEdit:
+        editGlossaryRow(selectedGlossaryRow());
+        return;
+    case kGlossaryDelete:
+        deleteGlossaryRow();
+        return;
+    case kSnippetSearch:
+        if (code == EN_CHANGE) fillSnippetList();
+        return;
+    case kSnippetAdd:
+        editSnippetRow(-1);
+        return;
+    case kSnippetEdit:
+        editSnippetRow(selectedSnippetRow());
+        return;
+    case kSnippetDelete:
+        deleteSnippetRow();
+        return;
+    case kSnippetVariables:
+        editSnippetVariables();
         return;
     case kSearch:
         if (code == EN_CHANGE) fillDictionaryList();

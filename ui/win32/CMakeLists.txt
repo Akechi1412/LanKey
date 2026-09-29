@@ -6,7 +6,9 @@ add_library(lankey_ui STATIC
     Theme.cpp
     TrayIcon.cpp
     SuggestionPopup.cpp
+    SnippetPicker.cpp
     DataDialog.cpp
+    RowEditor.cpp
     LanguageToast.cpp
     SettingsWindow.cpp
     CustomMethodDialog.cpp

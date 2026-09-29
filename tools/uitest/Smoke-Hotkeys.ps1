@@ -9,7 +9,7 @@ EnsureValidSettings | Out-Null   # never start from a file the app cannot read
 Copy-Item "$env:APPDATA\LanKey\settings.json" "$out\settings.backup.json" -Force
 CloseAllMsgBoxes
 $s = Settings; if ($s -eq [IntPtr]::Zero) { $s = OpenSettings }
-SelectNav $s 5   # Phím tắt
+SelectPage $s "Phím tắt"   # Phím tắt
 # Bring the window to front so real keys land in the field, never anywhere else.
 if (-not (ForceForeground $s)) { throw "Settings window is not in the foreground; aborting" }
 Shot $s "$out\page-hotkeys.png" | Out-Null
@@ -57,7 +57,7 @@ Check "field shows default" ((CtlText $s 601) -eq "Ctrl+Alt+F") (CtlText $s 601)
 # Give the other settings back to the user, but leave the hotkeys at the documented
 # defaults: the snapshot taken at the start may itself have come from an interrupted run.
 WriteSettings (Get-Content "$out\settings.backup.json" -Raw -Encoding UTF8)
-SelectNav $s 5; Click $s 620   # Mặc định
+SelectPage $s "Phím tắt"; Click $s 620   # Mặc định
 Start-Sleep -Milliseconds 300
 Check "left at defaults" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+F") (Json).hotkeys.convertWidth
 $results

@@ -6,11 +6,14 @@
 #include <vector>
 
 #include "core/model/Settings.h"
+#include "core/snippet/SnippetTemplate.h"
 
 #include "platform/win32/Win32.h"
 #include "ui/win32/CustomMethodDialog.h"
+#include "ui/win32/RowEditor.h"
 
-struct tagLVDISPINFOW; // <commctrl.h>; the virtual list asks for one cell at a time
+struct tagLVDISPINFOW;    // <commctrl.h>; the virtual list asks for one cell at a time
+struct tagNMLVCUSTOMDRAW; // ... and hands us each row to colour ourselves
 
 namespace lankey::ui::win32 {
 
@@ -51,6 +54,20 @@ public:
         unsigned int maxCallbackMicros = 0;
         unsigned long long lexiconEntries = 0;
     };
+    // One row of dictionary.csv, already in the form the list view draws.
+    struct GlossaryRow {
+        std::wstring vi;
+        std::wstring en;
+        std::wstring ja;
+        std::wstring note;
+    };
+    // One snippet. The whole body, not just the line the list shows: this is also what the
+    // editor opens with.
+    struct SnippetRow {
+        std::wstring abbr;
+        std::wstring body;
+        bool autoExpand = false;
+    };
     struct Runtime {
         std::wstring version;
         std::wstring dataDir;
@@ -58,7 +75,14 @@ public:
     };
     struct Callbacks {
         std::function<void(const core::model::Settings&)> onApply;
-        std::function<void()> onLoadDictionary; // -> setDictionary
+        std::function<void()> onLoadDictionary;
+        // The whole list after an add, an edit or a delete. Whole rather than a delta
+        // because that is what gets written to settings.json anyway, and a delta would be
+        // one more thing that can disagree with what is on screen.
+        std::function<void(std::vector<GlossaryRow>)> onGlossaryEdited;
+        std::function<void(std::vector<SnippetRow>)> onSnippetsEdited;
+        // name -> value, in the order shown. Used as {name} in any snippet body.
+        std::function<void(std::vector<std::pair<std::wstring, std::wstring>>)> onVariablesEdited;
         std::function<void(std::vector<std::wstring>)> onRemoveEntries;
         std::function<void(std::vector<std::wstring>, bool)> onSetBlocked;
         std::function<void(std::vector<std::wstring>, bool)> onSetPinned;
@@ -91,12 +115,26 @@ public:
     // Owner -> window. Safe to call while hidden (ignored).
     void setSettings(const core::model::Settings& settings); // external change (hotkey)
     void setDictionary(std::vector<DictionaryEntry> entries);
+    void setGlossary(std::vector<GlossaryRow> rows);
+    void setSnippets(std::vector<SnippetRow> rows);
+    void setSnippetVariables(std::vector<std::pair<std::wstring, std::wstring>> variables);
     void setRecentCorrections(std::vector<RecentCorrection> recent);
     void setStats(const Stats& stats);
 
 private:
-    enum class Page { Typing, Options, Smart, Dictionary, Privacy, Shortcuts, Advanced, About };
-    static constexpr int kPageCount = 8;
+    enum class Page {
+        Typing,
+        Options,
+        Smart,
+        Learned,  // phrases LanKey picked up from the user's typing
+        Glossary, // the VI-EN-JA terms the user wrote themselves
+        Snippets, // the abbreviations from snippets.json
+        Privacy,
+        Shortcuts,
+        Advanced,
+        About
+    };
+    static constexpr int kPageCount = 10;
 
     // A control and where it goes, in 96-dpi units relative to the content area. `stretch`
     // controls take the remaining height when the page is laid out (the dictionary list).
@@ -117,7 +155,9 @@ private:
     void buildTyping();
     void buildOptions();
     void buildSmart();
-    void buildDictionary();
+    void buildLearned();
+    void buildGlossary();
+    void buildSnippets();
     void buildPrivacy();
     void buildShortcuts();
     void buildAdvanced();
@@ -151,7 +191,30 @@ private:
     void drawStats(const DRAWITEMSTRUCT& item);
     void fitDictionaryColumns(); // the phrase column takes the width left over
     void updateDictionaryStatus();
+    void fillGlossaryList();
+    void updateGlossaryStatus();
+    void glossaryDispInfo(tagLVDISPINFOW& info);
+    void fitGlossaryColumns();
+    void fillSnippetList();
+    void updateSnippetStatus();
+    void snippetDispInfo(tagLVDISPINFOW& info);
+    void fitSnippetColumns();
+
+    // Add / edit / delete, for both lists. `row` is -1 for a new one.
+    void editGlossaryRow(int row);
+    void editSnippetRow(int row);
+    void editSnippetVariables();
+    void deleteGlossaryRow();
+    void deleteSnippetRow();
+    // The row of glossary_ / snippets_ that the selected list line stands for, or -1.
+    [[nodiscard]] int selectedGlossaryRow() const;
+    [[nodiscard]] int selectedSnippetRow() const;
+    void updateGlossaryButtons();
+    void updateSnippetButtons();
     void dictionaryDispInfo(tagLVDISPINFOW& info);
+    // Selection in the window's own colours instead of the system highlight, and no
+    // dotted focus rectangle. Shared by all three list views.
+    [[nodiscard]] LRESULT listCustomDraw(tagNMLVCUSTOMDRAW& draw);
     void shortcutRow(Page page, const wchar_t* keys, const wchar_t* what);
 
     void selectPage(Page page);
@@ -201,6 +264,7 @@ private:
     int radioGroup_ = 0;
     int scrollY_ = 0; // device pixels the current page is scrolled down by
     CustomMethodDialog customMethod_;
+    RowEditor rowEditor_;
     int y_[kPageCount] = {};
     int rowX_ = 0; // for sameRow buttons
     Page current_ = Page::Typing;
@@ -211,6 +275,18 @@ private:
                                        // re-folding 22k strings on every keystroke
     std::wstring dispBuf_;             // one cell of text, handed to the list view
     bool dictionaryLoading_ = false;   // waiting for the database thread
+
+    // The user's own VI-EN-JA glossary, as last read from dictionary.csv.
+    std::vector<GlossaryRow> glossary_;
+    std::vector<std::wstring> glossaryFolded_; // all four columns, lowercased, for search
+    std::vector<int> glossaryIndex_;           // rows shown -> glossary_ index
+
+    // The user's abbreviations, as last read from snippets.json.
+    std::vector<SnippetRow> snippets_;
+    std::vector<std::wstring> snippetFolded_; // abbreviation + preview, lowercased
+    std::vector<int> snippetIndex_;           // rows shown -> snippets_ index
+    std::vector<std::pair<std::wstring, std::wstring>> variables_;
+
     std::vector<RecentCorrection> recent_;
     Stats stats_;
 };

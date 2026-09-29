@@ -15,6 +15,7 @@ using model::Suggestion;
 using model::SuggestionList;
 using model::SuggestionQuery;
 using model::SuggestionSettings;
+using model::Syllable;
 using model::Thresholds;
 
 SuggestionEngine::SuggestionEngine() {
@@ -39,7 +40,33 @@ SuggestionList SuggestionEngine::suggest(const SuggestionQuery& query) const {
     SuggestionList result;
     const auto trie = trie_.load();
     const auto settings = settings_.load();
-    if (!trie || !settings || !settings->enabled) return result;
+    if (!settings || !settings->enabled) return result;
+
+    // The user's own glossary, first and separately: it is consulted even with no trie at
+    // all, because a brand new user who wrote dictionary.csv should get their own terms
+    // back on day one. Only right after a word was committed (an empty prefix) - never in
+    // the middle of typing one - and offered, not applied: Tab still decides.
+    if (query.prefix.empty() && !query.context.empty()) {
+        if (const auto glossary = conversions_.load()) {
+            const auto match = glossary->lookupTyped(query.sourceLanguage, query.context);
+            if (match.entry != nullptr) {
+                const std::u32string* columns[] = {&match.entry->vi, &match.entry->en,
+                                                   &match.entry->ja};
+                for (int column = 0; column < 3; ++column) {
+                    if (column == static_cast<int>(query.sourceLanguage)) continue;
+                    if (columns[column]->empty()) continue;
+                    Suggestion s;
+                    s.kind = Suggestion::Kind::Conversion;
+                    s.language = static_cast<model::Language>(column);
+                    s.insert = *columns[column];
+                    s.replacedSyllables = match.syllablesMatched;
+                    s.phrase.syllables.push_back(Syllable::fromComposed(*columns[column]));
+                    result.push_back(std::move(s));
+                }
+            }
+        }
+    }
+    if (!trie) return result;
 
     // Two modes share one lookup:
     //   completion - the user is mid-syllable (prefix non-empty): need >= minPrefixLength

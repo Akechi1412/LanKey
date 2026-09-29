@@ -47,7 +47,7 @@ function ClientBottom {
     return $cr.B
 }
 
-SelectNav $s 6   # Nâng cao: the tallest page
+SelectPage $s "Nâng cao"   # Nâng cao: the tallest page
 PumpMs 300
 $lastButton = 508   # "Đặt lại mặc định"
 $bottomBefore = CtlBottom $lastButton
@@ -77,12 +77,12 @@ Check "back to the top" ((CtlBottom $lastButton) -gt (ClientBottom))
 # Switching pages resets the scroll: scroll down, switch away and back.
 [void][UI]::SendMessageW($s, 0x0115, [IntPtr]7, [IntPtr]::Zero)
 PumpMs 200
-SelectNav $s 0; PumpMs 200; SelectNav $s 6; PumpMs 300
+SelectPage $s "Kiểu gõ"; PumpMs 200; SelectPage $s "Nâng cao"; PumpMs 300
 Check "page switch resets scroll" ((CtlBottom $lastButton) -gt (ClientBottom))
 
 # Tall window: the page now fits, so the scrollbar goes away and the wheel does nothing.
 Check "window grows" (ResizeTo $originalW 980) "asked for $originalW x980"
-SelectNav $s 6; PumpMs 400
+SelectPage $s "Nâng cao"; PumpMs 400
 Check "tall window shows the last control" ((CtlBottom $lastButton) -le (ClientBottom)) "button bottom=$(CtlBottom $lastButton) window bottom=$(ClientBottom)"
 Check "tall window has no scrollbar" (-not (Scrollable $s)) ("info=" + ((ScrollInfo $s) -join ","))
 $fitsBottom = CtlBottom $lastButton

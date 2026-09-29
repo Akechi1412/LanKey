@@ -25,14 +25,26 @@ public:
     UiaCaret& operator=(const UiaCaret&) = delete;
 
     // The caret (or the end of the selection) of the focused text control, in screen px.
-    [[nodiscard]] std::optional<ScreenRect> resolve() const {
+    // What the provider said about the caret, which is not the same question as where it
+    // is. "Inactive" is the one that matters: the element owns a caret but the keyboard
+    // is not in it - the user clicked away from the text box - and then there is no point
+    // in a suggestion, wherever it would be drawn.
+    enum class Caret { Unknown, Active, Inactive };
+
+    [[nodiscard]] std::optional<ScreenRect> resolve(Caret& state, bool& fromRange) const {
+        state = Caret::Unknown;
+        fromRange = false;
         if (automation_ == nullptr) return std::nullopt;
         IUIAutomationElement* element = nullptr;
         if (FAILED(automation_->GetFocusedElement(&element)) || element == nullptr) {
             return std::nullopt;
         }
-        std::optional<ScreenRect> rect = fromCaretRange(element);
-        if (!rect) rect = fromSelection(element);
+        std::optional<ScreenRect> rect = fromCaretRange(element, state);
+        fromRange = rect.has_value();
+        // The selection is NOT a fallback for an inactive caret. In a browser the document
+        // keeps a selection whether or not an input has the focus, so falling through here
+        // is what puts a suggestion popup on screen for text that is going nowhere.
+        if (!rect && state != Caret::Inactive) rect = fromSelection(element);
         element->Release();
         return rect;
     }
@@ -40,18 +52,22 @@ public:
 private:
     // TextPattern2::GetCaretRange - the precise caret, supported by modern editors
     // (browsers, Office, WPF/WinUI, Notepad on Windows 11).
-    [[nodiscard]] static std::optional<ScreenRect> fromCaretRange(IUIAutomationElement* element) {
+    [[nodiscard]] static std::optional<ScreenRect> fromCaretRange(IUIAutomationElement* element,
+                                                                  Caret& state) {
         IUIAutomationTextPattern2* text = nullptr;
         if (FAILED(element->GetCurrentPatternAs(UIA_TextPattern2Id, IID_IUIAutomationTextPattern2,
                                                 reinterpret_cast<void**>(&text))) ||
             text == nullptr) {
-            return std::nullopt;
+            return std::nullopt; // no opinion: older providers, panes, terminals
         }
         BOOL active = FALSE;
         IUIAutomationTextRange* range = nullptr;
         std::optional<ScreenRect> rect;
         if (SUCCEEDED(text->GetCaretRange(&active, &range)) && range != nullptr) {
-            rect = boundsOfCaretRange(range);
+            // isActive: "the caret is in the text element that has keyboard focus". The
+            // provider is answering the question no other API here can.
+            state = active ? Caret::Active : Caret::Inactive;
+            if (active) rect = boundsOfCaretRange(range);
             range->Release();
         }
         text->Release();
@@ -137,6 +153,34 @@ private:
         return rect;
     }
 
+public:
+    // Is the focused element something the user can type into? Measured 2026-09-29 across
+    // Edge, VS Code, Notepad and Windows Terminal: a browser reports the focused <input>
+    // as an Edit with IsReadOnly false, and once the user clicks away from it the focus
+    // falls back to the page Document with IsReadOnly TRUE. That is the one thing on
+    // screen that distinguishes "typing lands here" from "typing lands nowhere".
+    [[nodiscard]] int textFocus(int& controlType) const { // 0 unknown, 1 editable, 2 read-only
+        controlType = 0;
+        if (automation_ == nullptr) return 0;
+        IUIAutomationElement* element = nullptr;
+        if (FAILED(automation_->GetFocusedElement(&element)) || element == nullptr) return 0;
+        CONTROLTYPEID type = 0;
+        if (SUCCEEDED(element->get_CurrentControlType(&type))) controlType = type;
+        IUIAutomationValuePattern* value = nullptr;
+        int result = 0;
+        if (SUCCEEDED(element->GetCurrentPatternAs(UIA_ValuePatternId,
+                                                   IID_IUIAutomationValuePattern,
+                                                   reinterpret_cast<void**>(&value))) &&
+            value != nullptr) {
+            BOOL readOnly = FALSE;
+            if (SUCCEEDED(value->get_CurrentIsReadOnly(&readOnly))) result = readOnly ? 2 : 1;
+            value->Release();
+        }
+        element->Release();
+        return result;
+    }
+
+private:
     IUIAutomation* automation_ = nullptr;
 };
 
@@ -191,14 +235,121 @@ std::optional<ScreenRect> msaaCaret() {
 
 } // namespace
 
+const char* CaretResolver::sourceName(Source s) noexcept {
+    switch (s) {
+    case Source::GuiThread:
+        return "gui";
+    case Source::UiaCaretRange:
+        return "uia-caret";
+    case Source::UiaSelection:
+        return "uia-selection";
+    case Source::Msaa:
+        return "msaa";
+    case Source::NoTextFocus:
+        return "no-text-focus";
+    case Source::None:
+        break;
+    }
+    return "none";
+}
+
+const char* CaretResolver::focusName(TextFocus f) noexcept {
+    switch (f) {
+    case TextFocus::Editable:
+        return "editable";
+    case TextFocus::NotText:
+        return "not-text";
+    case TextFocus::Unknown:
+        break;
+    }
+    return "unknown";
+}
+
+// Measured 2026-09-29, not guessed: each of these was the focused element at a moment when
+// keystrokes demonstrably went nowhere - VS Code's file tree (TreeItem) and status bar
+// (StatusBar), a WinForms push button (Button), the group a web view falls back to.
+//
+// Deliberately absent, because typing DOES land there: Pane (Windows Terminal, Slack),
+// Window, Document (Notepad, browsers), Edit (every text box), Custom and DataItem (older
+// or unusual toolkits that say nothing useful). Anything not listed stays "unknown", and
+// unknown never suppresses anything.
+bool CaretResolver::isNonTextControl(int controlType) noexcept {
+    switch (controlType) {
+    case UIA_ButtonControlTypeId:
+    case UIA_CheckBoxControlTypeId:
+    case UIA_RadioButtonControlTypeId:
+    case UIA_HyperlinkControlTypeId:
+    case UIA_ImageControlTypeId:
+    case UIA_ListItemControlTypeId:
+    case UIA_ListControlTypeId:
+    case UIA_MenuControlTypeId:
+    case UIA_MenuBarControlTypeId:
+    case UIA_MenuItemControlTypeId:
+    case UIA_ProgressBarControlTypeId:
+    case UIA_ScrollBarControlTypeId:
+    case UIA_SliderControlTypeId:
+    case UIA_StatusBarControlTypeId:
+    case UIA_TabControlTypeId:
+    case UIA_TabItemControlTypeId:
+    case UIA_ToolBarControlTypeId:
+    case UIA_ToolTipControlTypeId:
+    case UIA_TreeControlTypeId:
+    case UIA_TreeItemControlTypeId:
+    case UIA_GroupControlTypeId:
+    case UIA_ThumbControlTypeId:
+    case UIA_TitleBarControlTypeId:
+    case UIA_SeparatorControlTypeId:
+    case UIA_SplitButtonControlTypeId:
+    case UIA_HeaderControlTypeId:
+    case UIA_HeaderItemControlTypeId:
+        return true;
+    default:
+        return false;
+    }
+}
+
+CaretResolver::TextFocus CaretResolver::textFocus() {
+    static thread_local UiaCaret uia;
+    const int verdict = uia.textFocus(lastControlType_);
+    // A control that never takes text settles it whatever the patterns say.
+    if (isNonTextControl(lastControlType_)) return TextFocus::NotText;
+    switch (verdict) {
+    case 1:
+        return TextFocus::Editable;
+    case 2:
+        return TextFocus::NotText;
+    default:
+        return TextFocus::Unknown;
+    }
+}
+
 std::optional<ScreenRect> CaretResolver::resolve() {
     // GetGUIThreadInfo first: when a classic control HAS a caret it is exact and free.
-    if (auto rect = guiThreadCaret()) return rect;
+    if (auto rect = guiThreadCaret()) {
+        lastSource_ = Source::GuiThread;
+        return rect;
+    }
     static thread_local UiaCaret uia;
-    if (auto rect = uia.resolve()) return rect;
-    if (auto rect = msaaCaret()) return rect;
+    bool fromRange = false;
+    UiaCaret::Caret state = UiaCaret::Caret::Unknown;
+    if (auto rect = uia.resolve(state, fromRange)) {
+        lastSource_ = fromRange ? Source::UiaCaretRange : Source::UiaSelection;
+        return rect;
+    }
+    if (state == UiaCaret::Caret::Inactive) {
+        // Told, not guessed: the keyboard is not in a text element. MSAA would only find
+        // the same stale caret, so stop here and let the caller act on the difference
+        // between "somewhere unknown" and "nowhere".
+        lastSource_ = Source::NoTextFocus;
+        return std::nullopt;
+    }
+    if (auto rect = msaaCaret()) {
+        lastSource_ = Source::Msaa;
+        return rect;
+    }
     // Unknown. Deliberately NOT the mouse: the popup must relate to where text goes, and
     // the mouse is usually somewhere else entirely. The UI falls back to a fixed corner.
+    lastSource_ = Source::None;
     return std::nullopt;
 }
 

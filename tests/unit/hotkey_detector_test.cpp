@@ -23,8 +23,10 @@ TEST(HotkeyDetector, FiresOnExactChordDown) {
     d.configure({});
     EXPECT_EQ(d.onKey(down(VirtualKey::F, Modifier::Control | Modifier::Alt)),
               HotkeyAction::ConvertWidth);
-    EXPECT_EQ(d.onKey(down(VirtualKey::L, Modifier::Control | Modifier::Alt)),
-              HotkeyAction::ConvertLanguage);
+    EXPECT_EQ(d.onKey(down(VirtualKey::E, Modifier::Control | Modifier::Alt)),
+              HotkeyAction::ConvertEnglish);
+    EXPECT_EQ(d.onKey(down(VirtualKey::J, Modifier::Control | Modifier::Alt)),
+              HotkeyAction::ConvertJapanese);
     EXPECT_EQ(d.onKey(down(VirtualKey::V, Modifier::Control | Modifier::Alt)),
               HotkeyAction::ClipboardHistory);
     EXPECT_EQ(d.onKey(down(VirtualKey::S, Modifier::Control | Modifier::Alt)),

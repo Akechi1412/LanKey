@@ -71,17 +71,28 @@ inline std::optional<Hotkey> parseHotkey(std::string_view text) {
     return h;
 }
 
-enum class HotkeyAction { ConvertLanguage, ConvertWidth, ClipboardHistory, SnippetPicker };
-inline constexpr int kHotkeyActionCount = 4;
+// One action per target language rather than a single key that cycles VI -> EN -> JA.
+// Cycling meant two presses and a flash through a language nobody asked for to reach the
+// third column; a key per target is one press and says what it will do.
+enum class HotkeyAction {
+    ConvertEnglish,
+    ConvertJapanese,
+    ConvertWidth,
+    ClipboardHistory,
+    SnippetPicker,
+};
+inline constexpr int kHotkeyActionCount = 5;
 inline constexpr std::array<HotkeyAction, kHotkeyActionCount> kAllHotkeyActions = {
-    HotkeyAction::ConvertLanguage, HotkeyAction::ConvertWidth, HotkeyAction::ClipboardHistory,
-    HotkeyAction::SnippetPicker};
+    HotkeyAction::ConvertEnglish, HotkeyAction::ConvertJapanese, HotkeyAction::ConvertWidth,
+    HotkeyAction::ClipboardHistory, HotkeyAction::SnippetPicker};
 
 // JSON key of each action.
 inline constexpr const char* hotkeyActionName(HotkeyAction a) noexcept {
     switch (a) {
-    case HotkeyAction::ConvertLanguage:
-        return "convertLanguage";
+    case HotkeyAction::ConvertEnglish:
+        return "convertEnglish";
+    case HotkeyAction::ConvertJapanese:
+        return "convertJapanese";
     case HotkeyAction::ConvertWidth:
         return "convertWidth";
     case HotkeyAction::ClipboardHistory:
@@ -93,15 +104,18 @@ inline constexpr const char* hotkeyActionName(HotkeyAction a) noexcept {
 }
 
 struct HotkeySettings {
-    Hotkey convertLanguage{Modifier::Control | Modifier::Alt, VirtualKey::L};
+    Hotkey convertEnglish{Modifier::Control | Modifier::Alt, VirtualKey::E};
+    Hotkey convertJapanese{Modifier::Control | Modifier::Alt, VirtualKey::J};
     Hotkey convertWidth{Modifier::Control | Modifier::Alt, VirtualKey::F};
     Hotkey clipboardHistory{Modifier::Control | Modifier::Alt, VirtualKey::V};
     Hotkey snippetPicker{Modifier::Control | Modifier::Alt, VirtualKey::S};
 
     Hotkey& operator[](HotkeyAction a) noexcept {
         switch (a) {
-        case HotkeyAction::ConvertLanguage:
-            return convertLanguage;
+        case HotkeyAction::ConvertEnglish:
+            return convertEnglish;
+        case HotkeyAction::ConvertJapanese:
+            return convertJapanese;
         case HotkeyAction::ConvertWidth:
             return convertWidth;
         case HotkeyAction::ClipboardHistory:
@@ -109,7 +123,7 @@ struct HotkeySettings {
         case HotkeyAction::SnippetPicker:
             return snippetPicker;
         }
-        return convertLanguage;
+        return convertEnglish;
     }
     const Hotkey& operator[](HotkeyAction a) const noexcept {
         return const_cast<HotkeySettings&>(*this)[a];

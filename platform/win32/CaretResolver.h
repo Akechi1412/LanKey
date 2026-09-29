@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 
 #include "core/interfaces/ICaretResolver.h"
@@ -23,7 +24,48 @@ namespace lankey::platform::win32 {
 // lands on a keystroke.
 class CaretResolver final : public core::ICaretResolver {
 public:
+    // Which step of the chain answered last time. Kept because "the popup is in the
+    // corner" is otherwise impossible to tell apart from "the popup is at the caret and
+    // the caret is in the corner", and because which step answers is per-application.
+    enum class Source : std::uint8_t {
+        None,        // nobody could say; the popup falls back to a screen corner
+        NoTextFocus, // the provider said the keyboard is NOT in a text element
+        GuiThread,
+        UiaCaretRange,
+        UiaSelection,
+        Msaa,
+    };
+
+    // Whether the keyboard is currently in something that takes text. Separate from
+    // resolve() because "where does the caret go" and "is there anywhere for it to go"
+    // are different questions, and only the second one can answer "definitely nowhere".
+    //
+    //   Editable - a text element with keyboard focus that is not read-only
+    //   NotText  - keystrokes have nowhere to land. Either a text element that is
+    //              read-only (in a browser, the page itself, which is where the focus
+    //              falls back to when the user clicks away from an input) or a control
+    //              that never takes text at all (a button, a tree item, a status bar).
+    //   Unknown  - the element says nothing either way (terminals, panes, older
+    //              toolkits). Nothing may be inferred from it.
+    enum class TextFocus : std::uint8_t { Unknown, Editable, NotText };
+    [[nodiscard]] TextFocus textFocus();
+    // UIA control type id of the element textFocus() last looked at (50004 Edit, 50030
+    // Document, 50033 Pane, 50023 TreeItem...). Diagnostic: which types show up in real
+    // applications is the thing that decides what may safely be treated as "not text".
+    [[nodiscard]] int lastControlType() const noexcept { return lastControlType_; }
+
+    // Whether a UIA control type never accepts typed text. Public so the reasoning can be
+    // tested without a window on screen.
+    [[nodiscard]] static bool isNonTextControl(int controlType) noexcept;
+
     [[nodiscard]] std::optional<core::model::ScreenRect> resolve() override;
+    [[nodiscard]] Source lastSource() const noexcept { return lastSource_; }
+    [[nodiscard]] static const char* sourceName(Source s) noexcept;
+    [[nodiscard]] static const char* focusName(TextFocus f) noexcept;
+
+private:
+    Source lastSource_ = Source::None;
+    int lastControlType_ = 0;
 };
 
 } // namespace lankey::platform::win32

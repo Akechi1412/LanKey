@@ -35,6 +35,11 @@ public:
 
     [[nodiscard]] bool busy() const noexcept { return busy_.load(); }
 
+    // The clipboard as text, or nullopt when it holds none or another process has it open.
+    // Public because {clipboard} in a snippet needs the same read; it belongs here because
+    // this is the file that knows how flaky OpenClipboard is.
+    static std::optional<std::wstring> readClipboardText();
+
 private:
     struct Saved {
         bool hadText = false;
@@ -43,7 +48,6 @@ private:
     static Saved saveClipboard();
     static void restoreClipboard(const Saved& saved);
     static bool setClipboardText(std::wstring_view text, bool hideFromHistory);
-    static std::optional<std::wstring> readClipboardText();
     static void releaseHeldModifiers();
     static void sendControlChord(WORD vk);
     static bool waitForClipboardChange(DWORD before, DWORD timeoutMs);

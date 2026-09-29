@@ -161,6 +161,25 @@ std::string JsonSettingsStore::serialize(const Settings& s) {
             hotkeys[model::hotkeyActionName(a)] = model::formatHotkey(s.hotkeys[a]);
         j["hotkeys"] = hotkeys;
     }
+    {
+        // An array of objects rather than one object per term: the order is the user's,
+        // and a JSON object would sort it out from under them on the next save.
+        nlohmann::json rows = nlohmann::json::array();
+        for (const auto& e : s.glossary) {
+            rows.push_back({{"vi", e.vi}, {"en", e.en}, {"ja", e.ja}, {"note", e.note}});
+        }
+        j["glossary"] = rows;
+    }
+    {
+        nlohmann::json variables = nlohmann::json::object();
+        for (const auto& [name, value] : s.snippets.variables)
+            variables[name] = value;
+        nlohmann::json items = nlohmann::json::array();
+        for (const auto& e : s.snippets.items) {
+            items.push_back({{"abbr", e.abbr}, {"body", e.body}, {"auto", e.autoExpand}});
+        }
+        j["snippets"] = {{"variables", variables}, {"items", items}};
+    }
     return j.dump(2) + "\n";
 }
 
@@ -249,6 +268,38 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
             } // unparsable: keep the default
         }
         s.hotkeys.resolveDuplicates();
+    }
+    if (const auto g = j.find("glossary"); g != j.end() && g->is_array()) {
+        for (const auto& row : *g) {
+            if (!row.is_object()) continue;
+            model::GlossaryEntry e;
+            get(row, "vi", e.vi);
+            get(row, "en", e.en);
+            get(row, "ja", e.ja);
+            get(row, "note", e.note);
+            // Kept even when the index would drop it: this is the user's editing surface,
+            // and a half-written row must survive a save to still be there to finish.
+            if (e.vi.empty() && e.en.empty() && e.ja.empty()) continue;
+            s.glossary.push_back(std::move(e));
+        }
+    }
+    if (const auto n = j.find("snippets"); n != j.end() && n->is_object()) {
+        if (const auto v = n->find("variables"); v != n->end() && v->is_object()) {
+            for (const auto& [name, value] : v->items()) {
+                if (value.is_string()) s.snippets.variables.emplace_back(name, value);
+            }
+        }
+        if (const auto items = n->find("items"); items != n->end() && items->is_array()) {
+            for (const auto& row : *items) {
+                if (!row.is_object()) continue;
+                model::SnippetEntry e;
+                get(row, "abbr", e.abbr);
+                get(row, "body", e.body);
+                get(row, "auto", e.autoExpand);
+                if (e.abbr.empty() && e.body.empty()) continue;
+                s.snippets.items.push_back(std::move(e));
+            }
+        }
     }
     return s;
 }

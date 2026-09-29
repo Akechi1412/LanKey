@@ -55,6 +55,10 @@ private:
     struct Row {
         std::wstring context; // already on screen, drawn dim ("hệ ")
         std::wstring insert;  // what Tab/Enter inserts, drawn in the text colour
+        // "EN"/"JA"/"VI" for a row that came from the user's own glossary, empty for one
+        // the smart layer guessed. The difference matters: one is their data, the other
+        // is a guess, and the popup should not make them look alike.
+        std::wstring chip;
     };
 
     static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);

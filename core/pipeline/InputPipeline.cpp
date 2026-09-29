@@ -91,6 +91,26 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     // for a copy; the per-keystroke path just remembers whether it was empty.
     const bool composedWasEmpty = buffer_.composed().text.empty();
 
+    // An auto-expanding snippet fires before the engine sees the terminating key: right
+    // now the abbreviation still stands on screen the way the user typed it, and the
+    // engine has not yet had its chance to rewrite the syllable at the boundary.
+    if (boundary != Boundary::None && snippetMatch_ && snippetMatch_->autoExpand &&
+        expandSnippet(generation)) {
+        // The terminating key stays the user's: it goes through and lands after the body.
+        return false;
+    }
+
+    // The keys of the word so far. Tracked here rather than from the engine's output
+    // because that output is exactly what an abbreviation must NOT be matched against.
+    if (boundary != Boundary::None) {
+        rawWord_.clear();
+        rawWordKnown_ = true;
+    } else if (key.key == VirtualKey::Backspace) {
+        if (!rawWord_.empty()) rawWord_.pop_back();
+    } else if (key.unicode != 0) {
+        rawWord_.push_back(key.unicode);
+    }
+
     EngineResult result = deps_.engine.process(key);
     keepPrefixInStep(result, key);
     const bool swallow = applyEngineResult(result, generation);
@@ -101,6 +121,12 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
             // the screen shows. Drop it - but remember it: the rest of a half-deleted
             // syllable must be glued back, and this may be a manual fix worth learning.
             onBackspaceIntoCommitted();
+            // The head of the half-deleted syllable is on screen, but which keys produced
+            // it is something this thread never knew. Reading an abbreviation off the
+            // letters instead would fire on "ónn" and miss "osnn", so stay quiet about
+            // snippets until the next word starts.
+            rawWord_.clear();
+            rawWordKnown_ = false;
         }
         buffer_.setComposed(std::move(result.composed));
         window_.current = buffer_.composed().text;
@@ -110,6 +136,7 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
             window_.current.insert(0, retype_->prefix);
         }
         window_.generation = generation;
+        updateSnippetMatch();
         refreshSuggestions(generation, /*afterWordBoundary=*/false);
         return swallow;
     }
@@ -166,6 +193,7 @@ bool InputPipeline::handleKey(const KeyEvent& key, std::uint64_t generation) {
     window_.current.clear();
     window_.generation = generation;
     popupSuppressed_ = false;
+    snippetMatch_.reset();
     hidePopup();
     clearPending();
     // A space is where the next word starts: predict it. Punctuation, Enter and
@@ -239,8 +267,11 @@ bool InputPipeline::handlePopupKey(const KeyEvent& key, std::uint64_t generation
         if (handlers_.onPopup) handlers_.onPopup(popup_);
         return true;
     case VirtualKey::Escape:
-        // Dismiss and stay quiet until this syllable ends: the user said "not now".
+        // Dismiss and stay quiet until this syllable ends: the user said "not now". That
+        // includes an auto-expanding snippet, which would otherwise still fire on the
+        // terminating key - the match has to go, not just the popup.
         popupSuppressed_ = true;
+        snippetMatch_.reset();
         hidePopup();
         clearPending();
         return true;
@@ -352,8 +383,56 @@ void InputPipeline::commitSyllable(const std::u32string& composed, bool transfor
     handlers_.onCommit(std::move(event)); // one copy in total: the window copy above
 }
 
+void InputPipeline::updateSnippetMatch() {
+    snippetMatch_.reset();
+    if (deps_.snippets == nullptr || !rawWordKnown_ || rawWord_.empty()) return;
+    // Esc means "not now" for the whole word, expansion included. A snippet that fires
+    // anyway after the user waved it away is what makes these tools hated.
+    if (popupSuppressed_) return;
+    if (const auto focus = deps_.focus.current(); focus && focus->isPasswordField) return;
+    snippetMatch_ = deps_.snippets->match(rawWord_);
+}
+
+bool InputPipeline::expandSnippet(std::uint64_t generation) {
+    if (!snippetMatch_ || deps_.snippets == nullptr) return false;
+    // What has to go is the abbreviation's footprint ON SCREEN, which is not its length:
+    // the keys "osnn" stand there as "ónn", and deleting four would eat into the word in
+    // front of it.
+    const auto onScreen = static_cast<int>(window_.current.size());
+    const auto rendered = deps_.snippets->expand(snippetMatch_->abbr);
+    if (!rendered) return false; // cancelled or gone: leave the abbreviation as typed
+
+    TextReplacement cmd;
+    cmd.deleteCount = onScreen;
+    cmd.insert = rendered->text;
+    cmd.caretLeft = rendered->cursorOffsetFromEnd;
+    cmd.expectedGeneration = generation;
+    cmd.reason = ReplacementReason::Macro;
+    deps_.sink.apply(cmd);
+    ++stats_.replacementsApplied;
+    ++stats_.snippetsExpanded;
+
+    // A body is not prose the user typed: it can run over several lines, it can end in
+    // punctuation, and the caret may now sit in the middle of it. Nothing typed next may
+    // be joined to it, and none of it is learned.
+    deps_.engine.reset();
+    buffer_.clearComposed();
+    window_.reset();
+    spans_.clear();
+    abandonRetype();
+    uncertain_ = false;
+    rawWord_.clear();
+    rawWordKnown_ = true;
+    snippetMatch_.reset();
+    popupSuppressed_ = false;
+    hidePopup();
+    clearPending();
+    return true;
+}
+
 void InputPipeline::refreshSuggestions(std::uint64_t generation, bool afterWordBoundary) {
-    if (deps_.suggestions == nullptr || popupSuppressed_) {
+    const bool haveSnippet = snippetMatch_.has_value();
+    if ((deps_.suggestions == nullptr && !haveSnippet) || popupSuppressed_) {
         hidePopup();
         clearPending();
         return;
@@ -384,15 +463,36 @@ void InputPipeline::refreshSuggestions(std::uint64_t generation, bool afterWordB
         query.prefix = text::caseFold(text::nfc(window_.current));
     }
     if (focus) query.appName = focus->appName;
+    // Vietnamese mode means the user is writing the `vi` column; English mode, the `en`
+    // one. The glossary offers whatever the other columns hold.
+    query.sourceLanguage =
+        vietnameseEnabled() ? model::Language::Vietnamese : model::Language::English;
 
-    model::SuggestionList items = deps_.suggestions->suggest(query);
+    model::SuggestionList items;
+    if (deps_.suggestions != nullptr) items = deps_.suggestions->suggest(query);
+    if (haveSnippet) {
+        // An abbreviation was typed on purpose, key for key. It goes first, ahead of
+        // anything the smart layer guessed from a prefix.
+        Suggestion s;
+        s.kind = Suggestion::Kind::Snippet;
+        s.insert = snippetMatch_->preview;
+        s.deleteCount = static_cast<int>(window_.current.size());
+        items.insert(items.begin(), std::move(s));
+    }
     if (items.empty()) {
         hidePopup();
         clearPending();
         return;
     }
-    if (!popup_.items.empty()) {
-        // Already showing: follow the typing immediately, no second wait.
+    // The idle delay exists so half-typed guesses do not flash past. A glossary row or an
+    // abbreviation is not a guess - the user wrote it - and making them pause to see their
+    // own words reads as lag. Shown at once; it still goes away on the next key or Esc
+    // like any popup.
+    const Suggestion::Kind leading = items.front().kind;
+    const bool ownWords =
+        leading == Suggestion::Kind::Conversion || leading == Suggestion::Kind::Snippet;
+    if (!popup_.items.empty() || ownWords) {
+        // Already showing, or worth showing now: no second wait.
         popup_.items = std::move(items);
         popup_.selected = 0;
         popup_.generation = generation;
@@ -422,12 +522,50 @@ void InputPipeline::promotePending(std::uint64_t generation) {
     if (handlers_.onPopup) handlers_.onPopup(popup_);
 }
 
+void InputPipeline::dismissPopup() {
+    popupSuppressed_ = true;
+    snippetMatch_.reset();
+    hidePopup();
+    clearPending();
+}
+
 void InputPipeline::selectSuggestion(std::size_t index, std::uint64_t generation) {
     if (index >= popup_.items.size()) return;
     const Suggestion chosen = popup_.items[index];
 
+    if (chosen.kind == Suggestion::Kind::Snippet) {
+        ++stats_.suggestionsSelected;
+        if (!expandSnippet(generation)) {
+            // Nothing to insert. The abbreviation stays on screen as typed; only the
+            // popup goes away, so the user is not left looking at an offer that did
+            // nothing.
+            hidePopup();
+            clearPending();
+        }
+        return;
+    }
+
+    const bool conversion = chosen.kind == Suggestion::Kind::Conversion;
+    // A conversion replaces words that are already on screen, so what has to be deleted is
+    // their on-screen footprint - the letters as typed plus the separators after them -
+    // which only this thread knows. The engine reports how many syllables; the spans say
+    // how wide they are. If the window no longer holds that many, the screen has moved on
+    // and the safe thing is to do nothing.
+    int replaced = 0;
+    if (conversion) {
+        replaced = chosen.replacedSyllables;
+        if (replaced <= 0 || static_cast<std::size_t>(replaced) > spans_.size()) return;
+    }
+
     TextReplacement cmd;
     cmd.deleteCount = chosen.deleteCount;
+    if (conversion) {
+        cmd.deleteCount = 0;
+        for (std::size_t i = spans_.size() - static_cast<std::size_t>(replaced); i < spans_.size();
+             ++i) {
+            cmd.deleteCount += spans_[i].typedLength + spans_[i].trailing;
+        }
+    }
     // A trailing space: the phrase is complete, and it is what lets the next prediction
     // chain straight on (Tab, Tab, Tab through a long phrase).
     cmd.insert = chosen.insert + U' ';
@@ -436,6 +574,30 @@ void InputPipeline::selectSuggestion(std::size_t index, std::uint64_t generation
     deps_.sink.apply(cmd);
     ++stats_.replacementsApplied;
     ++stats_.suggestionsSelected;
+
+    if (conversion) {
+        // The replaced syllables leave the window with their spans; the inserted term
+        // takes their place.
+        window_.committed.erase(window_.committed.end() - replaced, window_.committed.end());
+        spans_.erase(spans_.end() - replaced, spans_.end());
+        for (const auto& syllable : chosen.phrase.syllables) {
+            window_.commit(syllable);
+            spans_.push_back({static_cast<int>(syllable.text.size()), 1, U' ', U" "});
+        }
+        trimSpans();
+        abandonRetype();
+        // Deliberately no onSelection: this term came from the glossary the user wrote,
+        // not from anything they typed, and counting it as typed would mix the two.
+        deps_.engine.reset();
+        buffer_.clearComposed();
+        window_.current.clear();
+        window_.generation = generation;
+        popupSuppressed_ = false;
+        hidePopup();
+        clearPending();
+        refreshSuggestions(generation, /*afterWordBoundary=*/true);
+        return;
+    }
 
     // The whole phrase is now on screen. The syllables the insert added (everything after
     // the context that was already committed) become committed context, so the next
@@ -500,6 +662,9 @@ void InputPipeline::resetContext() {
     lastCorrection_.reset();
     popupSuppressed_ = false;
     swallowNextKeyUp_ = false;
+    rawWord_.clear();
+    rawWordKnown_ = true;
+    snippetMatch_.reset();
     hidePopup();
     clearPending();
 }

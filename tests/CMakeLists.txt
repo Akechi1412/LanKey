@@ -26,12 +26,17 @@ add_executable(lankey_tests
     unit/pipeline_suggestions_test.cpp
     unit/pipeline_autocorrect_test.cpp
     unit/pipeline_backspace_test.cpp
+    unit/pipeline_conversion_test.cpp
+    unit/pipeline_snippet_test.cpp
     unit/lexicon_store_test.cpp
     unit/smart_worker_test.cpp
     unit/json_settings_store_test.cpp
     unit/toggle_hotkey_test.cpp
     unit/hotkey_test.cpp
     unit/hotkey_detector_test.cpp
+    unit/conversion_index_test.cpp
+    unit/snippet_template_test.cpp
+    unit/snippet_index_test.cpp
     unit/width_converter_test.cpp
     unit/width_conformance_test.cpp
     replay/ReplayHarness.cpp

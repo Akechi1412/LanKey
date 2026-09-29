@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/convert/ConversionIndex.h"
 #include "core/model/Thresholds.h"
 #include "core/smart/suggest/Scorer.h"
 #include "core/smart/suggest/SuggestionEngine.h"
@@ -69,7 +70,78 @@ struct SuggestionEngineTest : testing::Test {
         engine.setSettings(settings);
         engine.publish(SuggestionEngine::buildSnapshot(entries, kNow, settings));
     }
+
+    // The user's own VI-EN-JA glossary.
+    void publishGlossary(const std::string& csv) {
+        auto index = std::make_shared<convert::ConversionIndex>();
+        const auto r = index->load(csv);
+        EXPECT_TRUE(r.has_value()) << (r ? "" : r.error().message);
+        engine.publishConversions(std::move(index));
+    }
 };
+
+constexpr const char* kGlossary = "vi,en,ja,note\n"
+                                  "\u0111\u0103ng nh\u1eadp,login,\u30ed\u30b0\u30a4\u30f3,\n"
+                                  "l\u1ed7i,bug,,\n";
+
+TEST_F(SuggestionEngineTest, GlossaryOffersTheOtherColumnsAfterAWordIsCommitted) {
+    settings.enabled = true;
+    publish({});
+    publishGlossary(kGlossary);
+    // Prediction: the word is finished, nothing is being typed.
+    const auto list = engine.suggest(query({U"\u0111\u0103ng", U"nh\u1eadp"}, U""));
+    ASSERT_EQ(list.size(), 2u);
+    EXPECT_EQ(list[0].kind, model::Suggestion::Kind::Conversion);
+    EXPECT_EQ(list[0].insert, U"login");
+    EXPECT_EQ(list[0].language, model::Language::English);
+    EXPECT_EQ(list[0].replacedSyllables, 2);
+    EXPECT_EQ(list[1].insert, U"\u30ed\u30b0\u30a4\u30f3");
+    EXPECT_EQ(list[1].language, model::Language::Japanese);
+}
+
+TEST_F(SuggestionEngineTest, GlossaryWorksWithNothingLearnedYet) {
+    // A new user who wrote dictionary.csv gets their own terms back on day one, before
+    // the lexicon has anything in it at all.
+    settings.enabled = true;
+    engine.setSettings(settings);
+    publishGlossary(kGlossary);
+    const auto list = engine.suggest(query({U"l\u1ed7i"}, U""));
+    ASSERT_EQ(list.size(), 1u);
+    EXPECT_EQ(list[0].insert, U"bug");
+}
+
+TEST_F(SuggestionEngineTest, GlossaryIsQuietInTheMiddleOfAWord) {
+    // "\u0111\u0103ng nh\u1ead" is half typed; converting it would replace letters the user is
+    // still writing. Conversions only ever follow a committed word.
+    settings.enabled = true;
+    publish({});
+    publishGlossary(kGlossary);
+    const auto list = engine.suggest(query({U"\u0111\u0103ng"}, U"nh\u1eadp"));
+    for (const auto& s : list)
+        EXPECT_NE(s.kind, model::Suggestion::Kind::Conversion);
+}
+
+TEST_F(SuggestionEngineTest, GlossaryFollowsTheModeTheUserIsTypingIn) {
+    settings.enabled = true;
+    publish({});
+    publishGlossary(kGlossary);
+    auto q = query({U"login"}, U"");
+    q.sourceLanguage = model::Language::English;
+    const auto list = engine.suggest(q);
+    ASSERT_FALSE(list.empty());
+    EXPECT_EQ(list[0].insert, U"\u0111\u0103ng nh\u1eadp");
+    EXPECT_EQ(list[0].language, model::Language::Vietnamese);
+}
+
+TEST_F(SuggestionEngineTest, GlossaryComesBeforeWhatWasMerelyLearned) {
+    settings.enabled = true;
+    publish({entry(U"l\u1ed7i th\u1eddi", 50), entry(U"l\u1ed7i h\u1ec7 th\u1ed1ng", 40)});
+    publishGlossary(kGlossary);
+    const auto list = engine.suggest(query({U"l\u1ed7i"}, U""));
+    ASSERT_FALSE(list.empty());
+    EXPECT_EQ(list[0].kind, model::Suggestion::Kind::Conversion) << "the user wrote this row";
+    EXPECT_EQ(list[0].insert, U"bug");
+}
 
 TEST(Scorer, StaticPrefersFrequentRecentAndLonger) {
     SuggestionSettings s;

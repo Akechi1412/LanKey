@@ -50,12 +50,12 @@ AppExclusionRule::AppExclusionRule(std::vector<std::string> excludedApps) {
     }
 }
 
+bool AppExclusionRule::excludes(const std::string& appName) const {
+    return std::ranges::find(excluded_, asciiLower(appName)) != excluded_.end();
+}
+
 PrivacyVerdict AppExclusionRule::evaluate(const model::SyllableCommitted& c) const {
-    const std::string app = asciiLower(c.focus.appName);
-    if (std::ranges::find(excluded_, app) != excluded_.end()) {
-        return PrivacyVerdict::Reject;
-    }
-    return PrivacyVerdict::Accept;
+    return excludes(c.focus.appName) ? PrivacyVerdict::Reject : PrivacyVerdict::Accept;
 }
 
 // -- PasswordFieldRule --------------------------------------------------------------------

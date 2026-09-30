@@ -136,5 +136,5 @@ Shot $s "$out\dpi120.png" | Out-Null
 WriteSettings (Get-Content "$out\settings.backup.json" -Raw -Encoding UTF8)
 SelectPage $s "Phím tắt"; Click $s 620   # Phim tat -> Mac dinh
 Start-Sleep -Milliseconds 400
-Check "hotkeys left at defaults" ((Json).hotkeys.convertLanguage -eq "Ctrl+Alt+L") (Json).hotkeys.convertLanguage
+Check "hotkeys left at defaults" ((Json).hotkeys.convertEnglish -eq "Ctrl+Alt+E") (Json).hotkeys.convertEnglish
 $results

@@ -145,6 +145,7 @@ std::string JsonSettingsStore::serialize(const Settings& s) {
     j["advanced"] = {
         {"sendKeys", s.advanced.sendKeys == SendKeysMode::KeyByKey ? "keyByKey" : "batch"},
     };
+    j["clipboard"] = {{"enabled", s.clipboard.enabled}};
     {
         nlohmann::json perApp = nlohmann::json::object();
         for (const auto& [app, vietnamese] : s.languageMemory.perApp)
@@ -241,6 +242,9 @@ lk::expected<Settings> JsonSettingsStore::parse(const std::string& text) {
         std::string mode;
         get(*a, "sendKeys", mode);
         s.advanced.sendKeys = mode == "keyByKey" ? SendKeysMode::KeyByKey : SendKeysMode::Batch;
+    }
+    if (const auto c = j.find("clipboard"); c != j.end() && c->is_object()) {
+        get(*c, "enabled", s.clipboard.enabled);
     }
     if (const auto m = j.find("languageMemory"); m != j.end() && m->is_object()) {
         get(*m, "enabled", s.languageMemory.enabled);

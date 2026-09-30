@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 #include <filesystem>
 #include <memory>
 
+#include "core/clipboard/ClipboardStore.h"
 #include "core/convert/ConversionIndex.h"
 #include "core/engine/OpenKeyEngineAdapter.h"
 #include "core/model/Settings.h"
@@ -28,8 +29,8 @@
 #include "platform/win32/Win32.h"
 #include "ui/win32/DataDialog.h"
 #include "ui/win32/LanguageToast.h"
+#include "ui/win32/PalettePicker.h"
 #include "ui/win32/SettingsWindow.h"
-#include "ui/win32/SnippetPicker.h"
 #include "ui/win32/SuggestionPopup.h"
 #include "ui/win32/TrayIcon.h"
 
@@ -83,8 +84,13 @@ private:
     void importLegacyFiles();
     void seedStarterContent();
     void showSnippetPicker();
+    void showClipboardPicker();
     void insertSnippet(const std::wstring& abbr);
     void onClipboardChanged();
+    void updateClipboardListener();
+    void publishClipboardToWindow();
+    void savePinnedClipboard();
+    void loadPinnedClipboard();
     void reloadSettingsFile();
     void onSettingsFileChanged(); // the watcher saw a save: apply it if it is not ours
     void showSettings();
@@ -117,7 +123,10 @@ private:
     // The user's snippets. Published to the hook thread, which is the only reader that
     // matters; this side keeps a pointer for the picker.
     SnippetSource snippets_;
-    bool clipboardListener_ = false; // registered only while a snippet asks for {clipboard}
+    // What the user copied. UI thread only; only the pinned rows ever reach the disk.
+    core::clipboard::ClipboardStore clipboard_;
+    bool clipboardListener_ = false;     // one listener, shared by the two readers below
+    bool snippetsWantClipboard_ = false; // some snippet body uses {clipboard}
     // The user's own VI-EN-JA glossary. Read on the UI thread, used by the hotkey on the
     // UI thread; the hook thread never touches it.
     std::shared_ptr<const core::convert::ConversionIndex> conversions_;
@@ -142,9 +151,12 @@ private:
     ui::win32::DataDialog dataDialog_;
     ui::win32::LanguageToast toast_;
     ui::win32::SettingsWindow settingsWindow_;
-    ui::win32::SnippetPicker snippetPicker_;
-    // Chosen in the picker, inserted once the focus is back where it came from.
+    ui::win32::PalettePicker palette_;
+    // What the palette was used for, acted on once the focus is back where it came from.
+    enum class PendingPaletteAction : std::uint8_t { None, Snippet, Paste };
+    PendingPaletteAction pending_ = PendingPaletteAction::None;
     std::wstring pendingSnippet_;
+    std::u32string pendingPaste_;
     std::string focusedApp_; // lowercase executable name with focus (UI thread)
     std::atomic<unsigned long long> lexiconEntries_{0}; // from the last dictionary load
     HWND uiWindow_ = nullptr;

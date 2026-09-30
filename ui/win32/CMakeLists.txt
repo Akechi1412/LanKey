@@ -1,4 +1,4 @@
-# lankey_ui - tray icon and suggestion popup (Win32 + GDI in v0.1).
+﻿# lankey_ui - tray icon and suggestion popup (Win32 + GDI in v0.1).
 # May include platform/win32/Win32.h (the <windows.h> wrapper) but never the hook, sender,
 # focus or caret classes: the UI only receives data from core.
 
@@ -6,7 +6,7 @@ add_library(lankey_ui STATIC
     Theme.cpp
     TrayIcon.cpp
     SuggestionPopup.cpp
-    SnippetPicker.cpp
+    PalettePicker.cpp
     DataDialog.cpp
     RowEditor.cpp
     LanguageToast.cpp

@@ -45,6 +45,12 @@ struct Thresholds {
     static constexpr int kSnapshotRebuildIntervalMs = 30000;
     static constexpr std::int64_t kCleanupIntervalMs = 24LL * 3600 * 1000; // age-out pass
 
+    // Clipboard history
+    static constexpr int kClipboardHistoryItems = 50; // unpinned; pinned ones are extra
+    // Longer copies are not remembered at all rather than remembered in part: pasting
+    // back half of a document would be worse than not offering it.
+    static constexpr int kClipboardMaxItemChars = 8192;
+
     // Threading
     static constexpr int kHookToWorkerQueueSize = 1024;
 };

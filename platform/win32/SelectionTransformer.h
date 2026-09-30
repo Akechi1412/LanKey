@@ -35,6 +35,17 @@ public:
 
     [[nodiscard]] bool busy() const noexcept { return busy_.load(); }
 
+    // Where the last transform() spent its time, in milliseconds. Kept because the whole
+    // operation is a sequence of waits on another process, and "it took 360 ms" is not
+    // something you can act on without knowing which wait.
+    struct Timings {
+        unsigned release = 0; // waiting for the user to let go of the hotkey modifiers
+        unsigned copy = 0;    // Ctrl+C until the clipboard actually changed
+        unsigned paste = 0;   // Ctrl+V plus the fixed settle
+        unsigned total = 0;
+    };
+    [[nodiscard]] Timings lastTimings() const noexcept { return timings_; }
+
     // The clipboard as text, or nullopt when it holds none or another process has it open.
     // Public because {clipboard} in a snippet needs the same read; it belongs here because
     // this is the file that knows how flaky OpenClipboard is.
@@ -53,6 +64,7 @@ private:
     static bool waitForClipboardChange(DWORD before, DWORD timeoutMs);
 
     std::atomic<bool> busy_{false};
+    Timings timings_{};
 };
 
 } // namespace lankey::platform::win32

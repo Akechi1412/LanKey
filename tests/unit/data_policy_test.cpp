@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include "core/clipboard/ClipboardStore.h"
 #include "core/model/Settings.h"
 #include "core/model/Thresholds.h"
 #include "core/smart/privacy/PrivacyFilter.h"
@@ -107,6 +108,43 @@ TEST(DataPolicy, ClipboardWatchingIsDeclaredAndIsOptIn) {
     const std::string p = policy();
     EXPECT_TRUE(mentions(p, "{clipboard}")) << "the hole that turns the watching on";
     EXPECT_TRUE(mentions(p, "ExcludeClipboardContentFromMonitorProcessing"));
+}
+
+TEST(DataPolicy, ClipboardHistoryIsOffUntilAskedFor) {
+    // The document leads with "tắt sẵn". If that default ever flips, the sentence becomes
+    // a lie about the most sensitive thing this program can hold.
+    EXPECT_FALSE(model::ClipboardSettings{}.enabled);
+    const std::string p = policy();
+    EXPECT_TRUE(mentions(p, "Lịch sử clipboard")) << "the section itself";
+    EXPECT_TRUE(mentions(p, "tắt sẵn"));
+}
+
+TEST(DataPolicy, ClipboardLimitsMatchTheCode) {
+    static_assert(model::Thresholds::kClipboardHistoryItems == 50,
+                  "update DATA-POLICY.md (\"50 mục\") together with this constant");
+    static_assert(model::Thresholds::kClipboardMaxItemChars == 8192,
+                  "update DATA-POLICY.md (\"8192 ký tự\") together with this constant");
+    const std::string p = policy();
+    EXPECT_TRUE(mentions(p, "50 mục"));
+    EXPECT_TRUE(mentions(p, "8192 ký tự"));
+}
+
+TEST(DataPolicy, OnlyPinnedClipboardItemsReachTheDiskAndTheySaySealed) {
+    // The row in the storage table is where the claim is made, so that is where it is
+    // checked - the word "clipboard.enc" appears elsewhere in the prose too.
+    clipboard::ClipboardStore store;
+    store.add(U"không ghim", 1);
+    store.add(U"có ghim", 2);
+    ASSERT_TRUE(store.setPinned(0, true)); // the newest, "có ghim"
+    const std::string written = store.serializePinned();
+    EXPECT_TRUE(written.find("kh\\u00f4ng ghim") == std::string::npos &&
+                written.find("không ghim") == std::string::npos)
+        << "an unpinned item must never be written: " << written;
+
+    const std::string row = storageRow("`clipboard.enc`");
+    ASSERT_FALSE(row.empty()) << "the storage table has no clipboard.enc row";
+    EXPECT_TRUE(mentions(row, "ghim")) << row;
+    EXPECT_TRUE(mentions(row, "DPAPI")) << row;
 }
 
 TEST(DataPolicy, ExcludedAppsNamedInThePolicyAreInTheDefaults) {

@@ -68,6 +68,12 @@ public:
         std::wstring body;
         bool autoExpand = false;
     };
+    // One remembered copy, as the list draws it. The text is the whole item; the list
+    // shows its first line.
+    struct ClipboardRow {
+        std::wstring text;
+        bool pinned = false;
+    };
     struct Runtime {
         std::wstring version;
         std::wstring dataDir;
@@ -83,6 +89,10 @@ public:
         std::function<void(std::vector<SnippetRow>)> onSnippetsEdited;
         // name -> value, in the order shown. Used as {name} in any snippet body.
         std::function<void(std::vector<std::pair<std::wstring, std::wstring>>)> onVariablesEdited;
+        // Index into the rows last handed to setClipboard().
+        std::function<void(std::size_t, bool)> onClipboardPin;
+        std::function<void(std::size_t)> onClipboardRemove;
+        std::function<void()> onClipboardClear;
         std::function<void(std::vector<std::wstring>)> onRemoveEntries;
         std::function<void(std::vector<std::wstring>, bool)> onSetBlocked;
         std::function<void(std::vector<std::wstring>, bool)> onSetPinned;
@@ -118,6 +128,7 @@ public:
     void setGlossary(std::vector<GlossaryRow> rows);
     void setSnippets(std::vector<SnippetRow> rows);
     void setSnippetVariables(std::vector<std::pair<std::wstring, std::wstring>> variables);
+    void setClipboard(std::vector<ClipboardRow> rows);
     void setRecentCorrections(std::vector<RecentCorrection> recent);
     void setStats(const Stats& stats);
 
@@ -126,15 +137,16 @@ private:
         Typing,
         Options,
         Smart,
-        Learned,  // phrases LanKey picked up from the user's typing
-        Glossary, // the VI-EN-JA terms the user wrote themselves
-        Snippets, // the abbreviations from snippets.json
+        Learned,   // phrases LanKey picked up from the user's typing
+        Glossary,  // the VI-EN-JA terms the user wrote themselves
+        Snippets,  // the abbreviations from snippets.json
+        Clipboard, // what was copied, when the user asked for it to be remembered
         Privacy,
         Shortcuts,
         Advanced,
         About
     };
-    static constexpr int kPageCount = 10;
+    static constexpr int kPageCount = 11;
 
     // A control and where it goes, in 96-dpi units relative to the content area. `stretch`
     // controls take the remaining height when the page is laid out (the dictionary list).
@@ -158,6 +170,7 @@ private:
     void buildLearned();
     void buildGlossary();
     void buildSnippets();
+    void buildClipboard();
     void buildPrivacy();
     void buildShortcuts();
     void buildAdvanced();
@@ -211,6 +224,11 @@ private:
     [[nodiscard]] int selectedSnippetRow() const;
     void updateGlossaryButtons();
     void updateSnippetButtons();
+    void fillClipboardList();
+    void clipboardDispInfo(tagLVDISPINFOW& info);
+    void fitClipboardColumns();
+    void updateClipboardButtons();
+    [[nodiscard]] int selectedClipboardRow() const;
     void dictionaryDispInfo(tagLVDISPINFOW& info);
     // Selection in the window's own colours instead of the system highlight, and no
     // dotted focus rectangle. Shared by all three list views.
@@ -286,6 +304,9 @@ private:
     std::vector<std::wstring> snippetFolded_; // abbreviation + preview, lowercased
     std::vector<int> snippetIndex_;           // rows shown -> snippets_ index
     std::vector<std::pair<std::wstring, std::wstring>> variables_;
+
+    // What was copied. Held only while the window is open; the store itself lives in App.
+    std::vector<ClipboardRow> clipboard_;
 
     std::vector<RecentCorrection> recent_;
     Stats stats_;

@@ -6,11 +6,14 @@ máy người dùng, không có đồng bộ cloud.
 
 > **Trạng thái:** v0.1 (MVP) đang dogfood — gõ được toàn hệ thống (hook Win32), học cụm từ vào
 > SQLite niêm phong bằng DPAPI, gợi ý/dự đoán có popup, tự sửa lỗi cá nhân hoá (F2, mặc định mức
-> Thận trọng, Undo bằng Backspace/Ctrl+Z), tray icon, cửa sổ Cài đặt 8 tab (kiểu gõ Telex/VNI/
+> Thận trọng, Undo bằng Backspace/Ctrl+Z), tray icon, cửa sổ Cài đặt 11 tab (kiểu gõ Telex/VNI/
 > Telex đơn giản/**tự định nghĩa 11 phím**, bảng mã Unicode/Unicode tổ hợp/TCVN3/VNI Windows, tuỳ
-> chọn gõ, gợi ý & tự sửa, từ điển cá nhân, quyền riêng tư, phím tắt, nâng cao — mở/tải lại
-> `settings.json`, đặt lại mặc định — giới thiệu), toast đổi Việt/Anh, Ctrl+Shift bật/tắt. Chưa
-> có: ký số bản phát hành, đổi phím tắt, import từ điển.
+> chọn gõ, gợi ý & tự sửa, cụm từ đã học, từ điển cá nhân, gõ tắt, clipboard, quyền riêng tư,
+> phím tắt đổi được, nâng cao — mở/tải lại `settings.json`, đặt lại mặc định — giới thiệu), toast
+> đổi Việt/Anh, Ctrl+Shift bật/tắt. **Công cụ văn bản:** từ điển riêng VI–EN–JA (gợi ý khi gõ,
+> `Ctrl+Alt+E`/`Ctrl+Alt+J` đổi vùng bôi đen), gõ tắt có ô trống `{date}`/`{clipboard}`/`{cursor}`/
+> `{param}` (`Ctrl+Alt+S`), half/full-width (`Ctrl+Alt+F`), lịch sử clipboard tắt sẵn
+> (`Ctrl+Alt+V`). Chưa có: ký số bản phát hành, import từ điển/gõ tắt từ Unikey.
 
 ## Ý tưởng
 
@@ -35,6 +38,15 @@ LanKey giữ nguyên phần đó (lấy engine từ upstream, không viết lạ
 Đơn vị học là **cụm 1–5 âm tiết**, không phải âm tiết đơn — nếu không thì "chương trình" không
 bao giờ được học và "sữa lỗi" không bao giờ được sửa.
 
+Ngoài hai thứ đó là **công cụ văn bản** cho người dùng chính: lập trình viên làm outsourcing cho
+công ty Nhật. Từ điển riêng VI–EN–JA và các đoạn gõ tắt nằm trong `settings.json`, sửa ngay trong
+cửa sổ Cài đặt. Hai điểm đáng nói về thiết kế:
+
+- **Gõ tắt khớp trên phím thô, không phải chữ trên màn hình.** Trong Telex, `osnn` hiện ra là `ónn`;
+  khớp theo chữ thì trượt, và xoá theo độ dài chữ viết tắt thì ăn mất từ đứng trước.
+- **Từ điển riêng là vùng cấm của tự sửa lỗi.** Từ người dùng tự khai không bao giờ bị coi là lỗi
+  chính tả để "sửa" giúp.
+
 ## Kiến trúc
 
 ```
@@ -46,11 +58,11 @@ Phím thô → [platform/win32: hook] → [core: engine adapter → smart layer]
 |---|---|---|
 | `core/` | model, interface, engine adapter, pipeline, smart layer (privacy/learn/suggest/correct), storage (SQLite, JSON), threading. **Không include Win32.** | có |
 | `third_party/` | engine upstream vendored, mỗi thư mục có `UPSTREAM.md` + `LICENSE` + `patches/` | `engine-openkey/` |
-| `tests/` | `unit/` (một file test cho mỗi class), `fakes/` (một fake cho mỗi interface), `replay/` (harness + `fixtures/`), `support/` | 257 test |
+| `tests/` | `unit/` (một file test cho mỗi class), `fakes/` (một fake cho mỗi interface), `replay/` (harness + `fixtures/`), `support/`, `bench/` | 496 test |
 | `tools/` | script sinh dữ liệu (`build-dictionary`) | có |
 | `data/` | từ điển âm tiết chuẩn (read-only, sinh từ `tools/`) | 6.683 âm tiết |
 | `platform/win32/` | `KeyboardHook` (thread riêng + watchdog), `InputSender`, `FocusWatcher` (UIA IsPassword), `CaretResolver` (UIA caret) | có |
-| `ui/win32/` | `TrayIcon`, `SuggestionPopup` (GDI) | có |
+| `ui/win32/` | `TrayIcon`, `SuggestionPopup`, `SettingsWindow`, `PalettePicker` (Ctrl+Alt+S và Ctrl+Alt+V dùng chung), `RowEditor`, `LanguageToast` — Win32 + GDI | có |
 | `app/` | `App` (DI thủ công, 4 thread, marshalling), `Log`, `main` | có |
 
 Quy tắc phụ thuộc: `app → ui, platform, core`; `ui → core`; `platform → core`; `core → chỉ STL +

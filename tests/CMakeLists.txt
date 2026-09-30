@@ -1,4 +1,4 @@
-find_package(GTest CONFIG REQUIRED)
+﻿find_package(GTest CONFIG REQUIRED)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
@@ -37,6 +37,7 @@ add_executable(lankey_tests
     unit/conversion_index_test.cpp
     unit/snippet_template_test.cpp
     unit/snippet_index_test.cpp
+    unit/clipboard_store_test.cpp
     unit/width_converter_test.cpp
     unit/width_conformance_test.cpp
     replay/ReplayHarness.cpp

@@ -1,4 +1,4 @@
-# lankey_core - pure C++20, ZERO Win32. Must build on Linux (CI job linux-clang).
+﻿# lankey_core - pure C++20, ZERO Win32. Must build on Linux (CI job linux-clang).
 
 find_package(tl-expected CONFIG REQUIRED)
 find_package(unofficial-sqlite3 CONFIG REQUIRED)
@@ -36,6 +36,7 @@ add_library(lankey_core STATIC
     convert/ConversionIndex.cpp
     snippet/SnippetTemplate.cpp
     snippet/SnippetIndex.cpp
+    clipboard/ClipboardStore.cpp
     model/Phrase.cpp
     pipeline/WordBoundaryDetector.cpp
     pipeline/InputPipeline.cpp

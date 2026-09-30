@@ -52,10 +52,10 @@ constexpr UINT_PTR kNoticeTimer = 2;
 // An editor saves by writing a temporary file and renaming it: several notifications per
 // save, and the file may be briefly incomplete. Settle before reading it.
 constexpr UINT_PTR kSettingsFileTimer = 3;
-constexpr UINT_PTR kSnippetInsertTimer = 6;
+constexpr UINT_PTR kPaletteActionTimer = 6;
 // Long enough for the window the picker took the focus from to finish activating, short
 // enough that the snippet still feels like it appeared on Enter.
-constexpr UINT kSnippetSettleMs = 80;
+constexpr UINT kPaletteSettleMs = 80;
 constexpr UINT kSettingsFileSettleMs = 250;
 
 std::filesystem::path appDataDir() {
@@ -199,6 +199,8 @@ bool App::initialise(HINSTANCE instance) {
     }
     applyGlossary();
     applySnippets();
+    loadPinnedClipboard();
+    updateClipboardListener();
 
     ui::win32::TrayIcon::Callbacks tray;
     tray.onToggleVietnamese = [this] { applyVietnameseEnabled(!pipeline_->vietnameseEnabled()); };
@@ -317,7 +319,7 @@ void App::shutdown() {
     hook_.stop();
     focus_.uninstall();
     if (worker_) worker_->stop();
-    snippetPicker_.destroy();
+    palette_.destroy();
     popup_.destroy();
     tray_.destroy();
     if (uiWindow_ != nullptr) {
@@ -386,10 +388,19 @@ LRESULT App::onUiMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
             KillTimer(uiWindow_, kSettingsFileTimer);
             onSettingsFileChanged();
         }
-        if (wParam == kSnippetInsertTimer) {
-            KillTimer(uiWindow_, kSnippetInsertTimer);
-            insertSnippet(pendingSnippet_);
+        if (wParam == kPaletteActionTimer) {
+            KillTimer(uiWindow_, kPaletteActionTimer);
+            // The focus is back on the user's window by now; act on what they picked.
+            const PendingPaletteAction action = pending_;
+            pending_ = PendingPaletteAction::None;
+            if (action == PendingPaletteAction::Snippet) {
+                insertSnippet(pendingSnippet_);
+            } else if (action == PendingPaletteAction::Paste) {
+                selection_.paste(pendingPaste_);
+                logf("clipboard: pasted %zu chars", pendingPaste_.size());
+            }
             pendingSnippet_.clear();
+            pendingPaste_.clear();
         }
         return 0;
     case kMsgLanguage:
@@ -624,9 +635,10 @@ void App::convertSelectionTo(core::model::Language target) {
                             ? L"Từ điển của bạn chưa có tiếng Nhật cho từ này"
                             : L"Từ điển của bạn chưa có tiếng Anh cho từ này");
     }
-    logf("hotkey: convert to %s -> %d in %llu ms",
+    const auto t = selection_.lastTimings();
+    logf("hotkey: convert to %s -> %d in %llu ms (release %u, copy %u, paste %u)",
          target == core::model::Language::Japanese ? "ja" : "en", static_cast<int>(r),
-         static_cast<unsigned long long>(GetTickCount64() - started));
+         static_cast<unsigned long long>(GetTickCount64() - started), t.release, t.copy, t.paste);
 }
 
 void App::onHotkey(core::model::HotkeyAction action) {
@@ -665,8 +677,7 @@ void App::onHotkey(core::model::HotkeyAction action) {
         showSnippetPicker();
         return;
     case HotkeyAction::ClipboardHistory:
-        toast_.showText(instance, L"…", ui::win32::kBrandEnglish,
-                        L"Tính năng này đang được phát triển");
+        showClipboardPicker();
         return;
     }
 }
@@ -786,24 +797,30 @@ void App::applySnippets() {
     auto next = std::make_shared<core::snippet::SnippetIndex>();
     next->load(settings_.snippets);
     logf("snippets: %zu of %zu usable", next->size(), settings_.snippets.items.size());
-    const bool wantsClipboard = next->usesClipboard();
+    snippetsWantClipboard_ = next->usesClipboard();
     snippets_.publish(std::move(next));
-
-    // The clipboard is watched only while a snippet actually asks for one. It holds
-    // passwords often enough that keeping a copy should be something the user asked for,
-    // not something LanKey does by default.
-    if (wantsClipboard != clipboardListener_ && uiWindow_ != nullptr) {
-        if (wantsClipboard) {
-            clipboardListener_ = AddClipboardFormatListener(uiWindow_) != 0;
-        } else {
-            RemoveClipboardFormatListener(uiWindow_);
-            clipboardListener_ = false;
-            snippets_.setClipboard({}); // and drop what was already held
-        }
-        logf("snippets: clipboard watch %s", clipboardListener_ ? "on" : "off");
-    }
-    if (clipboardListener_) onClipboardChanged(); // seed with whatever is on it now
+    updateClipboardListener();
     publishSnippetsToWindow();
+}
+
+// One listener for two readers - {clipboard} in a snippet body and the history - because
+// two would mean the clipboard is watched when only one of them was switched off.
+void App::updateClipboardListener() {
+    if (uiWindow_ == nullptr) return;
+    const bool wanted = snippetsWantClipboard_ || settings_.clipboard.enabled;
+    if (wanted == clipboardListener_) return;
+    if (wanted) {
+        clipboardListener_ = AddClipboardFormatListener(uiWindow_) != 0;
+    } else {
+        RemoveClipboardFormatListener(uiWindow_);
+        clipboardListener_ = false;
+        snippets_.setClipboard({}); // and drop what was already held
+    }
+    logf("clipboard: watch %s (snippets %d, history %d)", clipboardListener_ ? "on" : "off",
+         static_cast<int>(snippetsWantClipboard_), static_cast<int>(settings_.clipboard.enabled));
+    // Seed with whatever is on the clipboard now, so the first paste after switching the
+    // history on is not an empty list.
+    if (clipboardListener_) onClipboardChanged();
 }
 
 // Hands the abbreviations to the settings window, if it is open.
@@ -838,7 +855,75 @@ void App::onClipboardChanged() {
         return;
     }
     const auto text = platform::win32::SelectionTransformer::readClipboardText();
-    snippets_.setClipboard(text ? platform::win32::fromUtf16(*text) : std::u32string{});
+    const std::u32string copied = text ? platform::win32::fromUtf16(*text) : std::u32string{};
+    if (snippetsWantClipboard_) snippets_.setClipboard(copied);
+
+    if (!settings_.clipboard.enabled || copied.empty()) return;
+    // The same list that keeps LanKey from learning in a password manager or a terminal
+    // keeps the history out of them too: whatever was copied there is not ours to keep.
+    auto excluded = core::smart::AppExclusionRule::defaults();
+    excluded.insert(excluded.end(), settings_.privacy.excludedApps.begin(),
+                    settings_.privacy.excludedApps.end());
+    if (core::smart::AppExclusionRule(std::move(excluded)).excludes(focusedApp_)) {
+        logf("clipboard: not recorded, %s is excluded", focusedApp_.c_str());
+        return;
+    }
+    if (clipboard_.add(copied, static_cast<std::int64_t>(GetTickCount64()))) {
+        publishClipboardToWindow();
+    }
+}
+
+// Pinned items are the only part of the history that outlives the session, and they go to
+// disk sealed by DPAPI - the same protection the learned lexicon gets. A pin is something
+// the user meant to keep; it is still something they copied.
+void App::savePinnedClipboard() {
+    const std::filesystem::path path = dataDir_ / L"clipboard.enc";
+    const std::string plain = clipboard_.serializePinned();
+    std::error_code ec;
+    // Nothing pinned: remove the file rather than leave an empty sealed blob behind.
+    if (clipboard_.size() == 0 || plain.find("\"text\"") == std::string::npos) {
+        std::filesystem::remove(path, ec);
+        return;
+    }
+    const auto sealed = protector_.protect(std::span<const std::uint8_t>(
+        reinterpret_cast<const std::uint8_t*>(plain.data()), plain.size()));
+    if (!sealed) {
+        logf("clipboard: seal failed: %s", sealed.error().message.c_str());
+        return;
+    }
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (out)
+        out.write(reinterpret_cast<const char*>(sealed->data()),
+                  static_cast<std::streamsize>(sealed->size()));
+}
+
+void App::loadPinnedClipboard() {
+    std::ifstream in(dataDir_ / L"clipboard.enc", std::ios::binary);
+    if (!in) return;
+    const std::vector<std::uint8_t> sealed((std::istreambuf_iterator<char>(in)),
+                                           std::istreambuf_iterator<char>());
+    if (sealed.empty()) return;
+    const auto plain = protector_.unprotect(sealed);
+    if (!plain) {
+        logf("clipboard: unseal failed: %s", plain.error().message.c_str());
+        return;
+    }
+    const std::string json(reinterpret_cast<const char*>(plain->data()), plain->size());
+    if (const auto r = clipboard_.load(json); !r) {
+        logf("clipboard: %s", r.error().message.c_str());
+        return;
+    }
+    logf("clipboard: %zu pinned items restored", clipboard_.size());
+}
+
+// Hands the history to the settings window, if it is open.
+void App::publishClipboardToWindow() {
+    std::vector<ui::win32::SettingsWindow::ClipboardRow> rows;
+    rows.reserve(clipboard_.size());
+    for (std::size_t i = 0; i < clipboard_.size(); ++i) {
+        rows.push_back({platform::win32::toUtf16(clipboard_.at(i).text), clipboard_.at(i).pinned});
+    }
+    settingsWindow_.setClipboard(std::move(rows));
 }
 
 // Older versions kept these in dictionary.csv and snippets.json. Read them once, into
@@ -912,20 +997,65 @@ void App::showSnippetPicker() {
                         L"Chưa có đoạn gõ tắt nào");
         return;
     }
-    std::vector<ui::win32::SnippetPicker::Item> items;
+    std::vector<ui::win32::PalettePicker::Row> rows;
+    std::vector<std::wstring> abbrs;
     index->forEach([&](const core::snippet::Snippet& s) {
-        items.push_back({platform::win32::toUtf16(s.abbr),
-                         platform::win32::toUtf16(core::snippet::firstLine(s.body))});
+        abbrs.push_back(platform::win32::toUtf16(s.abbr));
+        rows.push_back({abbrs.back(), platform::win32::toUtf16(core::snippet::firstLine(s.body))});
     });
-    ui::win32::SnippetPicker::Callbacks cb;
-    cb.onChoose = [this](const std::wstring& abbr) {
+    ui::win32::PalettePicker::Callbacks cb;
+    cb.onChoose = [this, abbrs = std::move(abbrs)](std::size_t index) {
+        if (index >= abbrs.size()) return;
         // Not inserted here: the focus has only just been handed back and the window it
         // went to has not finished activating. A short timer lets the message loop keep
         // running while that settles, which a Sleep on this thread would not.
-        pendingSnippet_ = abbr;
-        SetTimer(uiWindow_, kSnippetInsertTimer, kSnippetSettleMs, nullptr);
+        pending_ = PendingPaletteAction::Snippet;
+        pendingSnippet_ = abbrs[index];
+        SetTimer(uiWindow_, kPaletteActionTimer, kPaletteSettleMs, nullptr);
     };
-    snippetPicker_.show(GetModuleHandleW(nullptr), std::move(items), std::move(cb));
+    palette_.show(GetModuleHandleW(nullptr),
+                  {L"Tìm theo viết tắt hoặc nội dung…", L"Không có đoạn gõ tắt nào khớp",
+                   L"↑↓ chọn     Enter chèn     Esc đóng", 150},
+                  std::move(rows), std::move(cb));
+}
+
+// Ctrl+Alt+V: what you copied, most recent first, pinned ones on top.
+void App::showClipboardPicker() {
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    if (!settings_.clipboard.enabled) {
+        toast_.showText(instance, L"…", ui::win32::kBrandEnglish,
+                        L"Bật \"Nhớ những gì bạn đã sao chép\" trong Cài đặt trước");
+        return;
+    }
+    if (clipboard_.size() == 0) {
+        toast_.showText(instance, L"…", ui::win32::kBrandEnglish, L"Chưa sao chép gì");
+        return;
+    }
+    std::vector<ui::win32::PalettePicker::Row> rows;
+    std::vector<std::u32string> texts;
+    for (std::size_t i = 0; i < clipboard_.size(); ++i) {
+        const auto& item = clipboard_.at(i);
+        texts.push_back(item.text);
+        std::wstring line = platform::win32::toUtf16(item.text);
+        // One line per row: a copied paragraph would otherwise be a column of line breaks.
+        if (const auto end = line.find_first_of(L"\r\n"); end != std::wstring::npos) {
+            line = line.substr(0, end) + L" …";
+        }
+        // A word, not a pin glyph: the pin emoji is outside the BMP and shows as a box in
+        // more fonts than it shows as a pin.
+        rows.push_back({std::move(line), item.pinned ? L"ghim" : L""});
+    }
+    ui::win32::PalettePicker::Callbacks cb;
+    cb.onChoose = [this, texts = std::move(texts)](std::size_t index) {
+        if (index >= texts.size()) return;
+        pending_ = PendingPaletteAction::Paste;
+        pendingPaste_ = texts[index];
+        SetTimer(uiWindow_, kPaletteActionTimer, kPaletteSettleMs, nullptr);
+    };
+    palette_.show(instance,
+                  {L"Tìm trong những gì đã sao chép…", L"Không có mục nào khớp",
+                   L"↑↓ chọn     Enter dán     Esc đóng", 0},
+                  std::move(rows), std::move(cb));
 }
 
 // Sends a snippet body to whatever now has the focus. Nothing is deleted: unlike the
@@ -1034,6 +1164,23 @@ void App::showSettings() {
         applySnippets();
         saveSettings();
     };
+    cb.onClipboardPin = [this](std::size_t index, bool pinned) {
+        if (clipboard_.setPinned(index, pinned)) {
+            savePinnedClipboard();
+            publishClipboardToWindow();
+        }
+    };
+    cb.onClipboardRemove = [this](std::size_t index) {
+        if (clipboard_.remove(index)) {
+            savePinnedClipboard();
+            publishClipboardToWindow();
+        }
+    };
+    cb.onClipboardClear = [this] {
+        clipboard_.clear();
+        savePinnedClipboard();
+        publishClipboardToWindow();
+    };
     cb.onVariablesEdited = [this](std::vector<std::pair<std::wstring, std::wstring>> rows) {
         settings_.snippets.variables.clear();
         settings_.snippets.variables.reserve(rows.size());
@@ -1132,6 +1279,17 @@ void App::applySettings(const core::model::Settings& next, bool persist) {
     }
     if (next.hotkeys != previous.hotkeys) {
         hook_.post([this, hotkeys = next.hotkeys] { hotkeys_.configure(hotkeys); });
+    }
+    if (next.clipboard != previous.clipboard) {
+        // Switching the history on has to start the watching now, not at the next start.
+        updateClipboardListener();
+        if (!next.clipboard.enabled) {
+            // Switched off means gone, including the pins: leaving them would be keeping
+            // copies after the user said stop.
+            clipboard_.clear();
+            savePinnedClipboard();
+            publishClipboardToWindow();
+        }
     }
     if (next.advanced != previous.advanced) {
         sender_.setStrategy(next.advanced.sendKeys == core::model::SendKeysMode::KeyByKey

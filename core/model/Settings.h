@@ -52,6 +52,14 @@ struct PrivacySettings {
     friend bool operator==(const PrivacySettings&, const PrivacySettings&) = default;
 };
 
+struct ClipboardSettings {
+    // Off until asked for. A history of everything you copy is the most sensitive thing
+    // this program could hold, so it is not something to find switched on.
+    bool enabled = false;
+
+    friend bool operator==(const ClipboardSettings&, const ClipboardSettings&) = default;
+};
+
 enum class SendKeysMode : std::uint8_t { Batch, KeyByKey };
 
 struct AdvancedSettings {
@@ -127,6 +135,7 @@ struct Settings {
     // one place to edit, one place to back up, and one file to watch.
     std::vector<GlossaryEntry> glossary;
     SnippetSettings snippets;
+    ClipboardSettings clipboard;
 
     friend bool operator==(const Settings&, const Settings&) = default;
 };

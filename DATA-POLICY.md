@@ -26,6 +26,7 @@ Tất cả trong thư mục `%APPDATA%\LanKey\` trên máy này:
 |---|---|---|
 | `user_lexicon.enc` | Cụm từ, cụm tự sửa, danh sách cấm sửa | Niêm phong bằng Windows Data Protection (DPAPI) theo tài khoản Windows của bạn. Chỉ tài khoản này trên chính máy này mở được; sao chép sang máy khác hoặc tài khoản khác là vô dụng. Cơ sở dữ liệu chỉ tồn tại dạng đọc được trong bộ nhớ khi LanKey đang chạy. |
 | `settings.json` | Cài đặt, **từ điển riêng**, **các đoạn gõ tắt** | Không mã hoá. Không chứa gì LanKey học được từ việc bạn gõ, nhưng chứa nguyên văn những dòng bạn tự nhập — kể cả mẫu thư hay địa chỉ e-mail bạn đặt trong đoạn gõ tắt. Ai đọc được tệp này thì đọc được chúng. |
+| `clipboard.enc` | Chỉ những mục bạn **ghim** trong lịch sử clipboard | Niêm phong bằng DPAPI như `user_lexicon.enc`. Chỉ tồn tại khi bạn bật lịch sử clipboard **và** ghim ít nhất một mục; bỏ ghim hết thì tệp bị xoá. |
 | `lankey.log` | Nhật ký kỹ thuật: thời điểm khởi động, số liệu tổng, lỗi | Không bao giờ chứa phím hay chữ bạn gõ. |
 
 Cụm ít dùng tự bị xoá sau 45–180 ngày không dùng; tổng số cụm không vượt quá 100 000.
@@ -56,6 +57,25 @@ clipboard đổi. Ba giới hạn, và đây là toàn bộ:
 - **Bỏ qua nội dung được đánh dấu bí mật.** Trình quản lý mật khẩu đánh dấu mục của chúng bằng cờ
   `ExcludeClipboardContentFromMonitorProcessing`; LanKey thấy cờ đó thì không giữ bản sao.
 - **Chỉ trong bộ nhớ.** Không ghi xuống đĩa, không vào từ điển học, mất khi thoát LanKey.
+
+## Lịch sử clipboard
+
+Đây là thứ nhạy cảm nhất LanKey có thể giữ, nên nó **tắt sẵn**. Bạn phải tự bật trong Cài đặt →
+Clipboard; chừng nào chưa bật, LanKey không theo dõi clipboard vì mục đích này và không giữ gì.
+
+Khi bạn bật:
+
+- **50 mục gần nhất, trong bộ nhớ.** Mất khi thoát LanKey. Mở bằng `Ctrl+Alt+V`.
+- **Mục bạn ghim là ngoại lệ duy nhất được ghi xuống đĩa**, vào `clipboard.enc`, niêm phong bằng
+  DPAPI theo tài khoản Windows của bạn. Mục ghim không tính vào hạn 50 và không bị đẩy ra.
+- **Không nhớ những gì bạn chép trong các ứng dụng loại trừ** — cùng danh sách ở mục Quyền riêng tư:
+  trình quản lý mật khẩu, terminal, Remote Desktop và những ứng dụng bạn thêm vào.
+- **Không nhớ nội dung được đánh dấu bí mật** (cờ `ExcludeClipboardContentFromMonitorProcessing`).
+- **Không nhớ thứ quá dài** — trên 8192 ký tự thì bỏ qua hẳn, không cắt bớt.
+- **Dán lại một mục cũ không làm xáo lịch sử**, và clipboard hiện tại của bạn được trả về nguyên
+  trạng ngay sau đó.
+- **Tắt lịch sử là xoá sạch**, kể cả các mục đã ghim và tệp `clipboard.enc`. Giữ lại chúng sau khi
+  bạn đã bảo dừng thì không còn là dừng.
 
 ## Xoá dữ liệu
 

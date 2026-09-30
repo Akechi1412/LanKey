@@ -20,27 +20,32 @@ Click $s 620   # Mặc định
 Start-Sleep -Milliseconds 400
 Check "starts from defaults" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+F") (Json).hotkeys.convertWidth
 
-$field = Ctl $s 601   # convertWidth
+# Found by what it shows, not by a number: the field ids follow the HotkeyAction enum and
+# adding an action shifts them all (it did, when convertEnglish/convertJapanese arrived).
+$fid = HotkeyField $s "Ctrl+Alt+F"
+if ($fid -lt 0) { throw "no hotkey field shows Ctrl+Alt+F; aborting" }
+
+$field = Ctl $s $fid
 Check "field focused" (FocusCtl $field)
-Check "field shows its value" ((CtlText $s 601) -eq "Ctrl+Alt+F") (CtlText $s 601)
+Check "field shows its value" ((CtlText $s $fid) -eq "Ctrl+Alt+F") (CtlText $s $fid)
 Chord @() 0x08                                 # Backspace clears the assignment
 Start-Sleep -Milliseconds 400
-Check "cleared field prompts" ((CtlText $s 601) -eq "Nhấn tổ hợp phím") (CtlText $s 601)
+Check "cleared field prompts" ((CtlText $s $fid) -eq "Nhấn tổ hợp phím") (CtlText $s $fid)
 Check "cleared in json" ((Json).hotkeys.convertWidth -eq "") "[$((Json).hotkeys.convertWidth)]"
 Chord @() 0x1B                                 # Esc restores the value it had on focus
 Start-Sleep -Milliseconds 400
-Check "esc restores" ((CtlText $s 601) -eq "Ctrl+Alt+F") (CtlText $s 601)
+Check "esc restores" ((CtlText $s $fid) -eq "Ctrl+Alt+F") (CtlText $s $fid)
 Check "esc restores json" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+F") (Json).hotkeys.convertWidth
 Chord @($VK_CONTROL, $VK_MENU) 0x47      # Ctrl+Alt+G
 Start-Sleep -Milliseconds 400
-Check "field shows chord" ((CtlText $s 601) -eq "Ctrl+Alt+G") (CtlText $s 601)
+Check "field shows chord" ((CtlText $s $fid) -eq "Ctrl+Alt+G") (CtlText $s $fid)
 Check "json updated" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+G") (Json).hotkeys.convertWidth
 
-Chord @($VK_CONTROL, $VK_MENU) 0x4C      # Ctrl+Alt+L: taken by convertLanguage
+Chord @($VK_CONTROL, $VK_MENU) 0x45      # Ctrl+Alt+E: taken by convertEnglish
 Start-Sleep -Milliseconds 400
 $t = CloseMsgBox
 Check "duplicate refused" ($t -like "*đã dùng cho*") "$t"
-Check "field kept previous" ((CtlText $s 601) -eq "Ctrl+Alt+G") (CtlText $s 601)
+Check "field kept previous" ((CtlText $s $fid) -eq "Ctrl+Alt+G") (CtlText $s $fid)
 Check "json kept previous" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+G")
 
 # The new chord works end to end: Ctrl+Alt+G now toggles width (log line appears).
@@ -52,7 +57,7 @@ Check "new chord reaches the app" ($new -like "*convertWidth*") ($new.Trim())
 
 Click $s 620   # Mặc định
 Check "defaults restored" ((Json).hotkeys.convertWidth -eq "Ctrl+Alt+F") (Json).hotkeys.convertWidth
-Check "field shows default" ((CtlText $s 601) -eq "Ctrl+Alt+F") (CtlText $s 601)
+Check "field shows default" ((CtlText $s $fid) -eq "Ctrl+Alt+F") (CtlText $s $fid)
 
 # Give the other settings back to the user, but leave the hotkeys at the documented
 # defaults: the snapshot taken at the start may itself have come from an interrupted run.

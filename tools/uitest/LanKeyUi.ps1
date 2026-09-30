@@ -80,6 +80,18 @@ function SelectPage($win, [string]$name) {
     throw "no settings page named '$name'"
 }
 
+# The id of the hotkey field currently showing $chord, or -1. The ids run in HotkeyAction
+# order, so adding an action shifts every one of them; looking the field up by what it
+# shows survives that, the way SelectPage survives a new page.
+function HotkeyField($win, [string]$chord) {
+  for ($id = 600; $id -lt 620; $id++) {
+    $c = Ctl $win $id
+    if ($c -eq [IntPtr]::Zero) { continue }
+    if ((GetText $c) -eq $chord) { return $id }
+  }
+  return -1
+}
+
 function ComboSelect($win, $id, $index) { $c = Ctl $win $id; [void][UI]::SendMessageW($c, $CB_SETCURSEL, [IntPtr]$index, [IntPtr]::Zero); Start-Sleep -Milliseconds 100 }
 function ListCount($win, $id) { [int][UI]::SendMessageW((Ctl $win $id), $LVM_GETITEMCOUNT, [IntPtr]::Zero, [IntPtr]::Zero) }
 function CloseMsgBox([int]$id = 1) { $m = MsgBox; if ($m -ne [IntPtr]::Zero) { $t = GetText (Ctl $m 0xFFFF); $b = Ctl $m $id; if ($b -ne [IntPtr]::Zero) { [void][UI]::PostMessageW($b, $BM_CLICK, [IntPtr]::Zero, [IntPtr]::Zero) } else { [void][UI]::PostMessageW($m, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) }; Start-Sleep -Milliseconds 500; return $t }; return $null }

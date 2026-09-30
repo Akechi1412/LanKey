@@ -16,6 +16,11 @@ public:
     explicit AppExclusionRule(std::vector<std::string> excludedApps);
     [[nodiscard]] PrivacyVerdict evaluate(const model::SyllableCommitted& c) const override;
 
+    // Is this executable one of the excluded ones? The clipboard history asks directly -
+    // it has an application name and no committed syllable - and must use the same list
+    // and the same comparison as the learning path, not a second copy of both.
+    [[nodiscard]] bool excludes(const std::string& appName) const;
+
     // The built-in list; user additions from PrivacySettings are appended by the caller.
     [[nodiscard]] static std::vector<std::string> defaults();
 

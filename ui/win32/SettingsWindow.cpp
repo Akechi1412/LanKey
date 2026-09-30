@@ -118,6 +118,13 @@ enum Id : int {
     kSnippetEdit = 364,
     kSnippetDelete = 365,
     kSnippetVariables = 366,
+    // Clipboard history
+    kClipboardEnabled = 370,
+    kClipboardList = 371,
+    kClipboardStatus = 372,
+    kClipboardPin = 373,
+    kClipboardRemove = 374,
+    kClipboardClear = 375,
     // Privacy
     kExcludedApps = 400,
     kSuggestionsOffApps,
@@ -169,9 +176,13 @@ const wchar_t* hotkeyActionLabel(core::model::HotkeyAction a) {
 // "Cụm từ đã học" is what LanKey picked up from the user's typing; "Từ điển cá nhân"
 // is the glossary they wrote themselves. Two different things that were briefly going to
 // share a name.
-const wchar_t* kPageTitles[] = {
-    L"Kiểu gõ", L"Tuỳ chọn gõ",    L"Gợi ý & Tự sửa", L"Cụm từ đã học", L"Từ điển cá nhân",
-    L"Gõ tắt",  L"Quyền riêng tư", L"Phím tắt",       L"Nâng cao",      L"Giới thiệu"};
+const wchar_t* kPageTitles[] = {L"Kiểu gõ",       L"Tuỳ chọn gõ",     L"Gợi ý & Tự sửa",
+                                L"Cụm từ đã học", L"Từ điển cá nhân", L"Gõ tắt",
+                                L"Clipboard",     L"Quyền riêng tư",  L"Phím tắt",
+                                L"Nâng cao",      L"Giới thiệu"};
+
+// Clipboard: the pin column keeps its width, the text takes the rest.
+constexpr int kClipboardColumnWidths[] = {420, 90};
 
 std::wstring lines(const std::vector<std::string>& apps) {
     std::wstring out;
@@ -678,6 +689,7 @@ void SettingsWindow::build(HINSTANCE instance) {
     buildLearned();
     buildGlossary();
     buildSnippets();
+    buildClipboard();
     buildPrivacy();
     buildShortcuts();
     buildAdvanced();
@@ -926,6 +938,60 @@ void SettingsWindow::buildSnippets() {
     // values shared by every snippet.
     y = by + 12;
     add(p, L"BUTTON", L"Biến…", BS_PUSHBUTTON | WS_TABSTOP, kSnippetVariables, 112, 112,
+        kButtonHeight);
+    page.back().rightAligned = true;
+    y = listTop;
+}
+
+void SettingsWindow::buildClipboard() {
+    const Page p = Page::Clipboard;
+    auto& y = y_[static_cast<int>(p)];
+    auto& page = pages_[static_cast<int>(p)];
+
+    check(p, L"Nhớ những gì bạn đã sao chép", kClipboardEnabled);
+    note(p,
+         L"Tắt sẵn. Khi bật, LanKey giữ 50 mục gần nhất trong bộ nhớ và mở bằng Ctrl+Alt+V. "
+         L"Không ghi xuống đĩa, mất khi thoát — trừ những mục bạn ghim, và chúng được niêm "
+         L"phong bằng Windows Data Protection. Không nhớ gì sao chép trong các ứng dụng ở "
+         L"mục Quyền riêng tư, cũng không nhớ thứ mà trình quản lý mật khẩu đánh dấu.",
+         4);
+
+    {
+        const HWND status =
+            add(p, L"STATIC", L"", SS_LEFT | SS_NOPREFIX | SS_CENTERIMAGE | SS_ENDELLIPSIS,
+                kClipboardStatus, 0, 300, kRowHeight);
+        dimStatics_.push_back(status);
+    }
+    y += kRowHeight + 6;
+    rowX_ = 0;
+    const int listTop = y;
+    {
+        const HWND list =
+            add(p, WC_LISTVIEWW, L"", LVS_REPORT | LVS_OWNERDATA | LVS_SHOWSELALWAYS | WS_TABSTOP,
+                kClipboardList, 0, -122, 100, WS_EX_CLIENTEDGE);
+        page.back().stretch = true;
+        ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+        const wchar_t* headers[] = {L"Nội dung", L"Ghim"};
+        for (int c = 0; c < 2; ++c) {
+            LVCOLUMNW col{};
+            col.mask = LVCF_TEXT | LVCF_WIDTH;
+            col.pszText = const_cast<wchar_t*>(headers[c]);
+            col.cx = px(kClipboardColumnWidths[c]);
+            ListView_InsertColumn(list, c, &col);
+        }
+    }
+    int by = listTop;
+    for (const auto& button : {std::pair<const wchar_t*, int>{L"Ghim / Bỏ ghim", kClipboardPin},
+                               {L"Xoá mục", kClipboardRemove}}) {
+        y = by;
+        add(p, L"BUTTON", button.first, BS_PUSHBUTTON | WS_TABSTOP, button.second, 112, 112,
+            kButtonHeight);
+        page.back().rightAligned = true;
+        by += kButtonHeight + 8;
+    }
+    // Apart from the two above: those act on one row, this one empties the history.
+    y = by + 12;
+    add(p, L"BUTTON", L"Xoá tất cả", BS_PUSHBUTTON | WS_TABSTOP, kClipboardClear, 112, 112,
         kButtonHeight);
     page.back().rightAligned = true;
     y = listTop;
@@ -1221,6 +1287,7 @@ void SettingsWindow::layout() {
     fitDictionaryColumns();
     fitGlossaryColumns();
     fitSnippetColumns();
+    fitClipboardColumns();
 }
 
 void SettingsWindow::paintChrome(HDC dc, const RECT& client) {
@@ -1316,6 +1383,7 @@ void SettingsWindow::loadControls() {
     tick(kSpellCheck, s.engine.spellCheck);
     tick(kQuickTelex, s.engine.quickTelex);
     tick(kRememberPerApp, s.languageMemory.enabled);
+    tick(kClipboardEnabled, s.clipboard.enabled);
 
     tick(kSuggestionsOn, s.suggestions.enabled);
     SetDlgItemInt(hwnd_, kIdleDelay, static_cast<UINT>(s.suggestions.idleDelayMs), FALSE);
@@ -1343,6 +1411,7 @@ void SettingsWindow::loadControls() {
     // in glossary_ rather than in the list view. Put them there now.
     fillGlossaryList();
     fillSnippetList();
+    fillClipboardList();
     loading_ = false;
 }
 
@@ -1363,6 +1432,7 @@ void SettingsWindow::applyFromControls() {
     s.engine.spellCheck = checked(kSpellCheck);
     s.engine.quickTelex = checked(kQuickTelex);
     s.languageMemory.enabled = checked(kRememberPerApp);
+    s.clipboard.enabled = checked(kClipboardEnabled);
 
     s.suggestions.enabled = checked(kSuggestionsOn);
     s.suggestions.idleDelayMs =
@@ -1594,6 +1664,71 @@ void SettingsWindow::glossaryDispInfo(tagLVDISPINFOW& info) {
     if (cell == nullptr) return;
     wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax), cell->c_str(),
               _TRUNCATE);
+}
+
+void SettingsWindow::setClipboard(std::vector<ClipboardRow> rows) {
+    clipboard_ = std::move(rows);
+    if (hwnd_ != nullptr) fillClipboardList();
+}
+
+void SettingsWindow::fillClipboardList() {
+    const HWND list = GetDlgItem(hwnd_, kClipboardList);
+    if (list == nullptr) return;
+    ListView_SetItemState(list, -1, 0, LVIS_SELECTED);
+    SendMessageW(list, LVM_SETITEMCOUNT, static_cast<WPARAM>(clipboard_.size()),
+                 LVSICF_NOSCROLL | LVSICF_NOINVALIDATEALL);
+    InvalidateRect(list, nullptr, TRUE);
+    fitClipboardColumns();
+    SetDlgItemTextW(hwnd_, kClipboardStatus,
+                    (std::to_wstring(clipboard_.size()) + L" mục").c_str());
+    updateClipboardButtons();
+}
+
+void SettingsWindow::clipboardDispInfo(tagLVDISPINFOW& info) {
+    if ((info.item.mask & LVIF_TEXT) == 0 || info.item.pszText == nullptr) return;
+    info.item.pszText[0] = 0;
+    const auto row = static_cast<std::size_t>(info.item.iItem);
+    if (info.item.iItem < 0 || row >= clipboard_.size()) return;
+    const ClipboardRow& e = clipboard_[row];
+    if (info.item.iSubItem == 0) {
+        // One line in a one-line cell; a copied paragraph would otherwise be a row of
+        // line-break boxes saying less than its first line does.
+        const auto end = e.text.find_first_of(L"\r\n");
+        dispBuf_ = end == std::wstring::npos ? e.text : e.text.substr(0, end) + L" …";
+        wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax),
+                  dispBuf_.c_str(), _TRUNCATE);
+        return;
+    }
+    if (info.item.iSubItem == 1 && e.pinned) {
+        wcsncpy_s(info.item.pszText, static_cast<std::size_t>(info.item.cchTextMax), L"✓",
+                  _TRUNCATE);
+    }
+}
+
+void SettingsWindow::fitClipboardColumns() {
+    const HWND list = GetDlgItem(hwnd_, kClipboardList);
+    if (list == nullptr) return;
+    RECT r{};
+    GetClientRect(list, &r);
+    ListView_SetColumnWidth(list, 1, px(kClipboardColumnWidths[1]));
+    ListView_SetColumnWidth(
+        list, 0,
+        (std::max)(px(200), static_cast<int>(r.right - r.left) - px(kClipboardColumnWidths[1])));
+}
+
+int SettingsWindow::selectedClipboardRow() const {
+    const int line = ListView_GetNextItem(GetDlgItem(hwnd_, kClipboardList), -1, LVNI_SELECTED);
+    return line >= 0 && static_cast<std::size_t>(line) < clipboard_.size() ? line : -1;
+}
+
+void SettingsWindow::updateClipboardButtons() {
+    const bool one = selectedClipboardRow() >= 0;
+    for (const int id : {kClipboardPin, kClipboardRemove}) {
+        if (const HWND b = GetDlgItem(hwnd_, id); b != nullptr) EnableWindow(b, one);
+    }
+    if (const HWND b = GetDlgItem(hwnd_, kClipboardClear); b != nullptr) {
+        EnableWindow(b, !clipboard_.empty());
+    }
 }
 
 int SettingsWindow::selectedGlossaryRow() const {
@@ -2020,16 +2155,21 @@ LRESULT SettingsWindow::handle(UINT msg, WPARAM wParam, LPARAM lParam) {
                 snippetDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
                 return 0;
             }
+            if (header->idFrom == kClipboardList) {
+                clipboardDispInfo(*reinterpret_cast<NMLVDISPINFOW*>(lParam));
+                return 0;
+            }
         }
         if (header != nullptr && header->code == NM_CUSTOMDRAW &&
             (header->idFrom == kDictList || header->idFrom == kGlossaryList ||
-             header->idFrom == kSnippetList)) {
+             header->idFrom == kSnippetList || header->idFrom == kClipboardList)) {
             return listCustomDraw(*reinterpret_cast<NMLVCUSTOMDRAW*>(lParam));
         }
         if (header != nullptr && header->code == LVN_ITEMCHANGED) {
             // Sửa and Xoá only mean something with a row selected.
             if (header->idFrom == kGlossaryList) updateGlossaryButtons();
             if (header->idFrom == kSnippetList) updateSnippetButtons();
+            if (header->idFrom == kClipboardList) updateClipboardButtons();
         }
         if (header != nullptr && header->code == NM_DBLCLK) {
             // Double click is how a list of rows is edited everywhere else.
@@ -2222,6 +2362,28 @@ void SettingsWindow::onCommand(int id, int code, HWND from) {
         return;
     case kSnippetVariables:
         editSnippetVariables();
+        return;
+    case kClipboardPin: {
+        const int row = selectedClipboardRow();
+        if (row >= 0 && callbacks_.onClipboardPin) {
+            callbacks_.onClipboardPin(static_cast<std::size_t>(row),
+                                      !clipboard_[static_cast<std::size_t>(row)].pinned);
+        }
+        return;
+    }
+    case kClipboardRemove: {
+        const int row = selectedClipboardRow();
+        if (row >= 0 && callbacks_.onClipboardRemove) {
+            callbacks_.onClipboardRemove(static_cast<std::size_t>(row));
+        }
+        return;
+    }
+    case kClipboardClear:
+        // Asked because it takes the pinned items too, and those were kept on purpose.
+        if (MessageBoxW(hwnd_, L"Xoá toàn bộ lịch sử clipboard, kể cả những mục đã ghim?",
+                        L"LanKey", MB_ICONQUESTION | MB_OKCANCEL) == IDOK) {
+            if (callbacks_.onClipboardClear) callbacks_.onClipboardClear();
+        }
         return;
     case kSearch:
         if (code == EN_CHANGE) fillDictionaryList();

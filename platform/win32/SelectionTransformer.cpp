@@ -157,11 +157,19 @@ SelectionTransformer::Result SelectionTransformer::transform(const Transform& fn
         ~Reset() { flag.store(false); }
     } reset{busy_};
 
+    const ULONGLONG started = GetTickCount64();
+    timings_ = {};
     releaseHeldModifiers();
+    timings_.release = static_cast<unsigned>(GetTickCount64() - started);
+
     const Saved saved = saveClipboard();
     const DWORD before = GetClipboardSequenceNumber();
+    const ULONGLONG copyStarted = GetTickCount64();
     sendControlChord('C');
-    if (!waitForClipboardChange(before, kCopyTimeoutMs)) {
+    const bool copied2 = waitForClipboardChange(before, kCopyTimeoutMs);
+    timings_.copy = static_cast<unsigned>(GetTickCount64() - copyStarted);
+    if (!copied2) {
+        timings_.total = static_cast<unsigned>(GetTickCount64() - started);
         return Result::NoSelection; // nothing copied: the clipboard was never touched
     }
     const auto copied = readClipboardText();
@@ -179,9 +187,12 @@ SelectionTransformer::Result SelectionTransformer::transform(const Transform& fn
         restoreClipboard(saved);
         return Result::Failed;
     }
+    const ULONGLONG pasteStarted = GetTickCount64();
     sendControlChord('V');
     Sleep(kPasteSettleMs); // the application reads the clipboard when it handles the paste
     restoreClipboard(saved);
+    timings_.paste = static_cast<unsigned>(GetTickCount64() - pasteStarted);
+    timings_.total = static_cast<unsigned>(GetTickCount64() - started);
     return Result::Replaced;
 }
 
